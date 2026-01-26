@@ -2,7 +2,7 @@ class Protoncli < Formula
   desc "Production-ready CLI email client for ProtonMail Bridge"
   homepage "https://github.com/kvnwdev/protoncli"
   url "https://github.com/kvnwdev/protoncli/archive/refs/tags/v0.1.1.tar.gz"
-  sha256 "8e8052a0c2d1b3568998cc84bea4b37c23a7db71d547cf8f34b6b109f2f55a30"
+  sha256 "242e27a4f26e0424abce02bac18a019fba98edb5735e30464da3d0d9be7811aa"
   license "MIT"
 
   depends_on "rust" => :build
