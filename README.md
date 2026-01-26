@@ -33,7 +33,7 @@ sudo cp target/release/protoncli /usr/local/bin/
 ### Homebrew (macOS/Linux)
 
 ```bash
-brew tap kvnw/protoncli
+brew tap kvnwdev/protoncli
 brew install protoncli
 ```
 
