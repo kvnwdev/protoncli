@@ -2,7 +2,11 @@ use crate::models::account::Account;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
+
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Preferences {
@@ -87,8 +91,25 @@ impl Config {
         let toml_str = toml::to_string_pretty(self)
             .context("Failed to serialize config")?;
 
-        fs::write(&config_path, toml_str)
-            .context("Failed to write config file")?;
+        // Create file with restrictive permissions (0600 on Unix)
+        #[cfg(unix)]
+        {
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&config_path)
+                .context("Failed to create config file")?;
+            file.write_all(toml_str.as_bytes())
+                .context("Failed to write config file")?;
+        }
+
+        #[cfg(not(unix))]
+        {
+            fs::write(&config_path, toml_str)
+                .context("Failed to write config file")?;
+        }
 
         Ok(())
     }

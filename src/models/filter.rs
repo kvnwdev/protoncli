@@ -110,12 +110,17 @@ impl MessageFilter {
         }
     }
 
+    fn escape_imap_string(s: &str) -> String {
+        s.replace('\\', "\\\\").replace('"', "\\\"")
+    }
+
     fn translate_field(&self, field: &str, operator: &Operator, value: &str) -> Result<String> {
+        let escaped_value = Self::escape_imap_string(value);
         match (field.to_lowercase().as_str(), operator) {
-            ("from", Operator::Equals) => Ok(format!("FROM \"{}\"", value)),
-            ("to", Operator::Equals) => Ok(format!("TO \"{}\"", value)),
-            ("subject", Operator::Equals) => Ok(format!("SUBJECT \"{}\"", value)),
-            ("body", Operator::Equals) => Ok(format!("BODY \"{}\"", value)),
+            ("from", Operator::Equals) => Ok(format!("FROM \"{}\"", escaped_value)),
+            ("to", Operator::Equals) => Ok(format!("TO \"{}\"", escaped_value)),
+            ("subject", Operator::Equals) => Ok(format!("SUBJECT \"{}\"", escaped_value)),
+            ("body", Operator::Equals) => Ok(format!("BODY \"{}\"", escaped_value)),
             ("unread", Operator::Equals) if value == "true" => Ok("UNSEEN".to_string()),
             ("is", Operator::Equals) if value == "unread" => Ok("UNSEEN".to_string()),
             ("date", Operator::GreaterThan) => {

@@ -32,22 +32,6 @@ impl FolderType {
             _ => FolderType::Other,
         }
     }
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            FolderType::Inbox => "inbox",
-            FolderType::Sent => "sent",
-            FolderType::Drafts => "drafts",
-            FolderType::Archive => "archive",
-            FolderType::Spam => "spam",
-            FolderType::Trash => "trash",
-            FolderType::Starred => "starred",
-            FolderType::AllMail => "allmail",
-            FolderType::Label => "label",
-            FolderType::Custom => "custom",
-            FolderType::Other => "other",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

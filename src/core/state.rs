@@ -1,3 +1,6 @@
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use sqlx::{migrate::MigrateDatabase, sqlite::SqlitePool, Sqlite};
@@ -15,6 +18,14 @@ impl StateManager {
 
         std::fs::create_dir_all(&data_dir)
             .context("Failed to create data directory")?;
+
+        // Set restrictive permissions on the data directory (0700 on Unix)
+        #[cfg(unix)]
+        {
+            let permissions = std::fs::Permissions::from_mode(0o700);
+            std::fs::set_permissions(&data_dir, permissions)
+                .context("Failed to set directory permissions")?;
+        }
 
         Ok(data_dir.join("state.db"))
     }
@@ -117,30 +128,5 @@ impl StateManager {
         .context("Failed to check agent-read status")?;
 
         Ok(result.map(|(read,)| read).unwrap_or(false))
-    }
-
-    pub async fn upsert_folder(
-        &self,
-        account: &str,
-        folder_path: &str,
-        folder_type: Option<&str>,
-    ) -> Result<()> {
-        sqlx::query(
-            r#"
-            INSERT INTO folders (account, folder_path, folder_type, last_synced)
-            VALUES (?1, ?2, ?3, CURRENT_TIMESTAMP)
-            ON CONFLICT(account, folder_path) DO UPDATE SET
-                folder_type = ?3,
-                last_synced = CURRENT_TIMESTAMP
-            "#,
-        )
-        .bind(account)
-        .bind(folder_path)
-        .bind(folder_type)
-        .execute(&self.pool)
-        .await
-        .context("Failed to upsert folder")?;
-
-        Ok(())
     }
 }

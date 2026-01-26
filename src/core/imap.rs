@@ -416,12 +416,4 @@ impl ImapClient {
         Ok(())
     }
 
-    pub async fn logout(mut self) -> Result<()> {
-        self.session
-            .logout()
-            .await
-            .context("Failed to logout")?;
-
-        Ok(())
-    }
 }

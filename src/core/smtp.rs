@@ -1,6 +1,6 @@
 use crate::core::auth::KeychainManager;
 use crate::models::account::{Account, SecurityType};
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use lettre::{
     message::Message,
     transport::smtp::{authentication::Credentials, response::Response},
@@ -27,9 +27,9 @@ impl SmtpClient {
                 .port(account.smtp_port)
                 .credentials(Credentials::new(account.email.clone(), password))
                 .build(),
-            SecurityType::None => SmtpTransport::builder_dangerous(&account.smtp_host)
-                .port(account.smtp_port)
-                .build(),
+            SecurityType::None => {
+                return Err(anyhow!("Insecure SMTP connections are not supported"));
+            }
         };
 
         Ok(Self { transport })
