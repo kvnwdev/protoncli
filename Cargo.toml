@@ -1,0 +1,44 @@
+[package]
+name = "protoncli"
+version = "0.1.0"
+edition = "2021"
+authors = ["Kevin Willoughby <kevinwilloughby@protonmail.com>"]
+description = "A production-ready CLI email client for ProtonMail Bridge"
+license = "MIT"
+
+[dependencies]
+# CLI & Runtime
+clap = { version = "4.4", features = ["derive", "cargo"] }
+tokio = { version = "1.35", features = ["full"] }
+tokio-util = { version = "0.7", features = ["compat"] }
+futures = "0.3"
+
+# Email Protocols
+async-imap = "0.11"
+async-native-tls = "0.5"
+lettre = "0.11"
+mail-parser = "0.9"
+
+# Security & Auth
+keyring = "2.3"
+rpassword = "7.3"
+
+# Data & Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "sqlite"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Utilities
+anyhow = "1.0"
+thiserror = "1.0"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+dirs = "5.0"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
