@@ -175,7 +175,10 @@ fn format_draft_description(draft: &crate::core::state::Draft) -> String {
         }
         ActionType::Delete => {
             if draft.permanent {
-                format!("Permanently delete {} {} from '{}'", count, msgs, draft.folder)
+                format!(
+                    "Permanently delete {} {} from '{}'",
+                    count, msgs, draft.folder
+                )
             } else {
                 format!("Move {} {} from '{}' to Trash", count, msgs, draft.folder)
             }

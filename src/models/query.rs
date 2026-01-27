@@ -2,7 +2,11 @@ use anyhow::{anyhow, Result};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum QueryExpr {
-    Field { name: String, operator: Operator, value: String },
+    Field {
+        name: String,
+        operator: Operator,
+        value: String,
+    },
     And(Box<QueryExpr>, Box<QueryExpr>),
     Or(Box<QueryExpr>, Box<QueryExpr>),
     Not(Box<QueryExpr>),
@@ -10,9 +14,9 @@ pub enum QueryExpr {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Operator {
-    Equals,       // field:value
-    GreaterThan,  // field:>value
-    LessThan,     // field:<value
+    Equals,      // field:value
+    GreaterThan, // field:>value
+    LessThan,    // field:<value
 }
 
 pub struct QueryParser;
@@ -65,7 +69,7 @@ impl QueryParser {
         for (i, token) in tokens.iter().enumerate() {
             if token.to_uppercase() == "OR" {
                 let left = Self::parse_tokens(&tokens[..i])?;
-                let right = Self::parse_tokens(&tokens[i+1..])?;
+                let right = Self::parse_tokens(&tokens[i + 1..])?;
                 return Ok(QueryExpr::Or(Box::new(left), Box::new(right)));
             }
         }
@@ -74,7 +78,7 @@ impl QueryParser {
         for (i, token) in tokens.iter().enumerate() {
             if token.to_uppercase() == "AND" {
                 let left = Self::parse_tokens(&tokens[..i])?;
-                let right = Self::parse_tokens(&tokens[i+1..])?;
+                let right = Self::parse_tokens(&tokens[i + 1..])?;
                 return Ok(QueryExpr::And(Box::new(left), Box::new(right)));
             }
         }
@@ -170,5 +174,85 @@ mod tests {
         } else {
             panic!("Expected Field expression");
         }
+    }
+
+    #[test]
+    fn test_less_than_operator() {
+        let result = QueryParser::parse("date:<2024-01-01").unwrap();
+        if let QueryExpr::Field { operator, .. } = result {
+            assert_eq!(operator, Operator::LessThan);
+        } else {
+            panic!("Expected Field expression");
+        }
+    }
+
+    #[test]
+    fn test_quoted_string_in_value() {
+        let result = QueryParser::parse("subject:\"hello world\"").unwrap();
+        if let QueryExpr::Field { value, .. } = result {
+            assert_eq!(value, "hello world");
+        } else {
+            panic!("Expected Field expression");
+        }
+    }
+
+    #[test]
+    fn test_implicit_and_multiple_tokens() {
+        // Multiple tokens without explicit AND should be implicit AND
+        let result = QueryParser::parse("from:alice@example.com subject:hello").unwrap();
+        assert!(matches!(result, QueryExpr::And(_, _)));
+    }
+
+    #[test]
+    fn test_exclamation_not() {
+        let result = QueryParser::parse("! from:spam@example.com").unwrap();
+        assert!(matches!(result, QueryExpr::Not(_)));
+    }
+
+    #[test]
+    fn test_empty_query_error() {
+        let result = QueryParser::parse("");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_empty_value_error() {
+        let result = QueryParser::parse("from:");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Empty value"));
+    }
+
+    #[test]
+    fn test_empty_value_after_operator_error() {
+        let result = QueryParser::parse("date:>");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Empty value after operator"));
+    }
+
+    #[test]
+    fn test_invalid_syntax_no_colon() {
+        let result = QueryParser::parse("justtext");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Invalid query syntax"));
+    }
+
+    #[test]
+    fn test_complex_or_and_expression() {
+        // OR has lower precedence than AND, so this should parse correctly
+        let result = QueryParser::parse("from:a@b.com AND subject:test OR from:c@d.com").unwrap();
+        // Should be: OR((AND(from:a, subject:test)), from:c)
+        assert!(matches!(result, QueryExpr::Or(_, _)));
+    }
+
+    #[test]
+    fn test_case_insensitive_operators() {
+        // Operators should be case-insensitive
+        let result1 = QueryParser::parse("from:a AND to:b").unwrap();
+        let result2 = QueryParser::parse("from:a and to:b").unwrap();
+        assert!(matches!(result1, QueryExpr::And(_, _)));
+        assert!(matches!(result2, QueryExpr::And(_, _)));
     }
 }

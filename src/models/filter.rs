@@ -10,8 +10,6 @@ pub struct MessageFilter {
     pub limit: Option<usize>,
     pub query: Option<String>,
     pub preview: bool,
-    /// Folder extracted from `in:` query field (overrides --folder flag)
-    pub query_folder: Option<String>,
 }
 
 impl MessageFilter {
@@ -23,7 +21,6 @@ impl MessageFilter {
             limit: None,
             query: None,
             preview: false,
-            query_folder: None,
         }
     }
 
@@ -93,9 +90,11 @@ impl MessageFilter {
 
     fn translate_to_imap(&self, expr: &QueryExpr) -> Result<String> {
         match expr {
-            QueryExpr::Field { name, operator, value } => {
-                self.translate_field(name, operator, value)
-            }
+            QueryExpr::Field {
+                name,
+                operator,
+                value,
+            } => self.translate_field(name, operator, value),
             QueryExpr::And(left, right) => {
                 let left_imap = self.translate_to_imap(left)?;
                 let right_imap = self.translate_to_imap(right)?;
@@ -142,12 +141,8 @@ impl MessageFilter {
                 let date = self.parse_date(value)?;
                 Ok(format!("BEFORE {}", date))
             }
-            ("size", Operator::GreaterThan) => {
-                Ok(format!("LARGER {}", value))
-            }
-            ("size", Operator::LessThan) => {
-                Ok(format!("SMALLER {}", value))
-            }
+            ("size", Operator::GreaterThan) => Ok(format!("LARGER {}", value)),
+            ("size", Operator::LessThan) => Ok(format!("SMALLER {}", value)),
             ("has", Operator::Equals) if value == "attachment" => {
                 // Mark for client-side filtering
                 Ok("ALL".to_string()) // Will filter client-side
@@ -171,8 +166,8 @@ impl MessageFilter {
             }
             _ => {
                 let supported_fields = vec![
-                    "from", "to", "subject", "body", "unread", "is",
-                    "date", "since", "before", "size", "has", "newer", "older", "in", "folder"
+                    "from", "to", "subject", "body", "unread", "is", "date", "since", "before",
+                    "size", "has", "newer", "older", "in", "folder",
                 ];
                 Err(anyhow!(
                     "Unsupported query: '{}:{}'\n\nSupported fields: {}\n\nRun 'protoncli query-help' for more information.",
@@ -202,14 +197,15 @@ impl MessageFilter {
         }
 
         let (num_str, unit) = value.split_at(value.len() - 1);
-        let num: i64 = num_str.parse()
+        let num: i64 = num_str
+            .parse()
             .context(format!("Invalid number in relative date: '{}'", value))?;
 
         match unit {
-            "d" => Ok(num),           // days
-            "w" => Ok(num * 7),       // weeks
-            "m" => Ok(num * 30),      // months (approximate)
-            "y" => Ok(num * 365),     // years (approximate)
+            "d" => Ok(num),       // days
+            "w" => Ok(num * 7),   // weeks
+            "m" => Ok(num * 30),  // months (approximate)
+            "y" => Ok(num * 365), // years (approximate)
             _ => Err(anyhow!(
                 "Invalid relative date format: '{}'. Use format like 30d, 2w, 1m, 1y",
                 value
@@ -329,5 +325,134 @@ mod tests {
         let filter = MessageFilter::new().with_query("in:Sent".to_string());
         let imap_query = filter.build_imap_search_query().unwrap();
         assert_eq!(imap_query, "ALL");
+    }
+
+    #[test]
+    fn test_empty_query_returns_all() {
+        let filter = MessageFilter::new().with_query("".to_string());
+        let imap_query = filter.build_imap_search_query().unwrap();
+        assert_eq!(imap_query, "ALL");
+    }
+
+    #[test]
+    fn test_whitespace_query_returns_all() {
+        let filter = MessageFilter::new().with_query("   ".to_string());
+        let imap_query = filter.build_imap_search_query().unwrap();
+        assert_eq!(imap_query, "ALL");
+    }
+
+    #[test]
+    fn test_no_query_returns_all() {
+        let filter = MessageFilter::new();
+        let imap_query = filter.build_imap_search_query().unwrap();
+        assert_eq!(imap_query, "ALL");
+    }
+
+    #[test]
+    fn test_from_query_translation() {
+        let filter = MessageFilter::new().with_query("from:test@example.com".to_string());
+        let imap_query = filter.build_imap_search_query().unwrap();
+        assert_eq!(imap_query, "FROM \"test@example.com\"");
+    }
+
+    #[test]
+    fn test_subject_query_translation() {
+        let filter = MessageFilter::new().with_query("subject:hello".to_string());
+        let imap_query = filter.build_imap_search_query().unwrap();
+        assert_eq!(imap_query, "SUBJECT \"hello\"");
+    }
+
+    #[test]
+    fn test_unread_query_translation() {
+        let filter = MessageFilter::new().with_query("unread:true".to_string());
+        let imap_query = filter.build_imap_search_query().unwrap();
+        assert_eq!(imap_query, "UNSEEN");
+    }
+
+    #[test]
+    fn test_is_unread_query_translation() {
+        let filter = MessageFilter::new().with_query("is:unread".to_string());
+        let imap_query = filter.build_imap_search_query().unwrap();
+        assert_eq!(imap_query, "UNSEEN");
+    }
+
+    #[test]
+    fn test_and_query_translation() {
+        let filter = MessageFilter::new().with_query("from:a@b.com AND subject:test".to_string());
+        let imap_query = filter.build_imap_search_query().unwrap();
+        assert!(imap_query.contains("FROM \"a@b.com\""));
+        assert!(imap_query.contains("SUBJECT \"test\""));
+    }
+
+    #[test]
+    fn test_or_query_translation() {
+        let filter = MessageFilter::new().with_query("from:a@b.com OR from:c@d.com".to_string());
+        let imap_query = filter.build_imap_search_query().unwrap();
+        assert!(imap_query.starts_with("OR"));
+    }
+
+    #[test]
+    fn test_not_query_translation() {
+        let filter = MessageFilter::new().with_query("NOT from:spam@example.com".to_string());
+        let imap_query = filter.build_imap_search_query().unwrap();
+        assert!(imap_query.starts_with("NOT"));
+    }
+
+    #[test]
+    fn test_size_greater_than_translation() {
+        let filter = MessageFilter::new().with_query("size:>1000000".to_string());
+        let imap_query = filter.build_imap_search_query().unwrap();
+        assert_eq!(imap_query, "LARGER 1000000");
+    }
+
+    #[test]
+    fn test_size_less_than_translation() {
+        let filter = MessageFilter::new().with_query("size:<5000".to_string());
+        let imap_query = filter.build_imap_search_query().unwrap();
+        assert_eq!(imap_query, "SMALLER 5000");
+    }
+
+    #[test]
+    fn test_unsupported_field_error() {
+        let filter = MessageFilter::new().with_query("unsupported:value".to_string());
+        let result = filter.build_imap_search_query();
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Unsupported query"));
+    }
+
+    #[test]
+    fn test_escape_imap_string() {
+        // Test that special characters are escaped
+        assert_eq!(MessageFilter::escape_imap_string("test"), "test");
+        assert_eq!(
+            MessageFilter::escape_imap_string("test\"quote"),
+            "test\\\"quote"
+        );
+        assert_eq!(
+            MessageFilter::escape_imap_string("test\\backslash"),
+            "test\\\\backslash"
+        );
+    }
+
+    #[test]
+    fn test_combined_filter_with_unread_only() {
+        let filter = MessageFilter::new()
+            .with_query("from:test@example.com".to_string())
+            .with_unread_only(true);
+        let imap_query = filter.build_imap_search_query().unwrap();
+        assert!(imap_query.contains("FROM \"test@example.com\""));
+        assert!(imap_query.contains("UNSEEN"));
+    }
+
+    #[test]
+    fn test_extract_folder_with_other_tokens() {
+        // Folder extraction should work even with other query tokens
+        assert_eq!(
+            MessageFilter::extract_folder_from_query(
+                "from:test@example.com in:Archive subject:hello"
+            ),
+            Some("Archive".to_string())
+        );
     }
 }

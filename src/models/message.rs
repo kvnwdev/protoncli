@@ -58,7 +58,7 @@ pub struct Message {
     pub preview: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_read: Option<bool>,
-    
+
     // Full message fields (for read command)
     pub bcc: Vec<EmailAddress>,
     pub reply_to: Option<EmailAddress>,

@@ -1,4 +1,4 @@
-/// Batch processing utilities for handling large message selections
+//! Batch processing utilities for handling large message selections
 
 /// Default batch size for IMAP operations
 pub const DEFAULT_BATCH_SIZE: usize = 100;
@@ -8,27 +8,6 @@ pub fn chunk_uids(uids: &[u32], batch_size: usize) -> Vec<Vec<u32>> {
     uids.chunks(batch_size)
         .map(|chunk| chunk.to_vec())
         .collect()
-}
-
-/// Process UIDs in batches, collecting results
-pub async fn process_in_batches<F, Fut, T, E>(
-    uids: &[u32],
-    batch_size: usize,
-    mut processor: F,
-) -> Result<Vec<T>, E>
-where
-    F: FnMut(Vec<u32>) -> Fut,
-    Fut: std::future::Future<Output = Result<T, E>>,
-{
-    let chunks = chunk_uids(uids, batch_size);
-    let mut results = Vec::with_capacity(chunks.len());
-
-    for chunk in chunks {
-        let result = processor(chunk).await?;
-        results.push(result);
-    }
-
-    Ok(results)
 }
 
 #[cfg(test)]

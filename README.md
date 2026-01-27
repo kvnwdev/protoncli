@@ -302,7 +302,20 @@ cargo build
 ### Run Tests
 
 ```bash
+# Run all tests
 cargo test
+
+# Run with visible output
+cargo test -- --nocapture
+
+# Run specific module tests
+cargo test models::query
+cargo test models::filter
+cargo test cli::query
+cargo test cli::actions
+
+# Run with verbose output
+cargo test --verbose
 ```
 
 ### Run
