@@ -228,7 +228,10 @@ pub async fn execute_query(
         .collect();
 
     // Save query results for potential `select last` - use first folder for compatibility
-    let primary_folder = effective_folders.first().map(|s| s.as_str()).unwrap_or("INBOX");
+    let primary_folder = effective_folders
+        .first()
+        .map(|s| s.as_str())
+        .unwrap_or("INBOX");
     let result_entries: Vec<(u32, Option<&str>, Option<&str>, Option<i64>)> = all_messages
         .iter()
         .map(|msg| {
@@ -361,7 +364,10 @@ fn print_markdown(output: &QueryOutput) -> Result<()> {
             let from = msg.from.as_deref().unwrap_or("-");
             let subject = msg.subject.as_deref().unwrap_or("-");
             let date = msg.date.as_deref().unwrap_or("-");
-            println!("| {} | {} | {} | {} | {} |", msg.uid, folder, from, subject, date);
+            println!(
+                "| {} | {} | {} | {} | {} |",
+                msg.uid, folder, from, subject, date
+            );
         }
     } else {
         println!("| UID | From | Subject | Date |");

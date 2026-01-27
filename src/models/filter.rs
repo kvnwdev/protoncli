@@ -464,7 +464,8 @@ mod tests {
 
     #[test]
     fn test_extract_folders_no_folders() {
-        let folders = MessageFilter::extract_folders_from_query("from:alice@example.com subject:test");
+        let folders =
+            MessageFilter::extract_folders_from_query("from:alice@example.com subject:test");
         assert!(folders.is_empty());
     }
 
