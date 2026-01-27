@@ -15,6 +15,7 @@ pub struct SelectionEntry {
     pub uid: i64,
     pub message_id: Option<String>,
     pub subject: Option<String>,
+    pub shadow_uid: Option<i64>,
 }
 
 /// A query history result entry
@@ -26,6 +27,45 @@ pub struct QueryResultEntry {
     pub uid: i64,
     pub message_id: Option<String>,
     pub subject: Option<String>,
+    pub shadow_uid: Option<i64>,
+}
+
+/// A message record from the messages table (includes shadow_uid which is the row id)
+#[derive(Debug, Clone, FromRow)]
+#[allow(dead_code)] // Fields populated via FromRow derive for database queries
+pub struct MessageRecord {
+    pub id: i64, // This IS the shadow_uid
+    pub account: String,
+    pub message_id: String,
+    pub folder: String,
+    pub uid: i64, // IMAP UID (current location)
+    pub subject: Option<String>,
+    pub from_address: Option<String>,
+    pub date_sent: Option<String>,
+    pub agent_read: bool,
+}
+
+/// Resolved message location for operations
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // shadow_uid included for debugging/logging purposes
+pub struct ResolvedMessage {
+    pub shadow_uid: i64,
+    pub folder: String,
+    pub imap_uid: u32,
+    pub message_id: Option<String>,
+}
+
+/// Validate shadow UIDs from a vector of i64
+pub fn validate_shadow_uids(ids: &[i64]) -> Result<()> {
+    for id in ids {
+        if *id <= 0 {
+            return Err(anyhow::anyhow!(
+                "Invalid message ID '{}'. Message IDs must be positive integers.",
+                id
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Action types for drafts
@@ -78,39 +118,6 @@ pub struct FlagParams {
 }
 
 impl FlagParams {
-    /// Merge another FlagParams into this one (OR logic for booleans, concatenate arrays)
-    pub fn merge(&mut self, other: &FlagParams) {
-        // Boolean: true wins (OR logic)
-        if other.read == Some(true) {
-            self.read = Some(true);
-        } else if self.read.is_none() {
-            self.read = other.read;
-        }
-
-        if other.starred == Some(true) {
-            self.starred = Some(true);
-        } else if self.starred.is_none() {
-            self.starred = other.starred;
-        }
-
-        // Arrays: concatenate
-        for label in &other.labels {
-            if !self.labels.contains(label) {
-                self.labels.push(label.clone());
-            }
-        }
-        for unlabel in &other.unlabels {
-            if !self.unlabels.contains(unlabel) {
-                self.unlabels.push(unlabel.clone());
-            }
-        }
-
-        // move_to: execution-time value wins
-        if other.move_to.is_some() {
-            self.move_to = other.move_to.clone();
-        }
-    }
-
     /// Check if any flag action is specified
     pub fn has_any_action(&self) -> bool {
         self.read.is_some()
@@ -205,6 +212,51 @@ impl StateManager {
             .await
             .context("Failed to run migration 003")?;
 
+        // Run migration 004 - shadow UIDs (uses separate statements for ALTER TABLE)
+        let migration_004_applied: Option<(i32,)> =
+            sqlx::query_as("SELECT version FROM schema_migrations WHERE version = 4")
+                .fetch_optional(&pool)
+                .await
+                .context("Failed to check migration 004 status")?;
+
+        if migration_004_applied.is_none() {
+            // Add shadow_uid column to selections if it doesn't exist
+            let _ = sqlx::query(
+                "ALTER TABLE selections ADD COLUMN shadow_uid INTEGER REFERENCES messages(id)",
+            )
+            .execute(&pool)
+            .await;
+
+            // Add shadow_uid column to query_history_results if it doesn't exist
+            let _ = sqlx::query("ALTER TABLE query_history_results ADD COLUMN shadow_uid INTEGER REFERENCES messages(id)")
+                .execute(&pool)
+                .await;
+
+            // Create indexes
+            sqlx::query("CREATE INDEX IF NOT EXISTS idx_messages_id ON messages(id)")
+                .execute(&pool)
+                .await
+                .context("Failed to create idx_messages_id")?;
+
+            sqlx::query(
+                "CREATE INDEX IF NOT EXISTS idx_selections_shadow_uid ON selections(shadow_uid)",
+            )
+            .execute(&pool)
+            .await
+            .context("Failed to create idx_selections_shadow_uid")?;
+
+            sqlx::query("CREATE INDEX IF NOT EXISTS idx_query_history_results_shadow_uid ON query_history_results(shadow_uid)")
+                .execute(&pool)
+                .await
+                .context("Failed to create idx_query_history_results_shadow_uid")?;
+
+            // Mark migration as applied
+            sqlx::query("INSERT OR IGNORE INTO schema_migrations (version) VALUES (4)")
+                .execute(&pool)
+                .await
+                .context("Failed to mark migration 004 as applied")?;
+        }
+
         Ok(Self { pool })
     }
 
@@ -231,52 +283,6 @@ impl StateManager {
 
         // If messages exists but schema_migrations doesn't, we have old schema
         Ok(migrations_exists.is_none())
-    }
-
-    /// Upsert a message using message_id as the stable identifier.
-    /// folder/uid represent the current location and are updated on conflict.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn upsert_message(
-        &self,
-        account: &str,
-        folder: &str,
-        uid: u32,
-        message_id: Option<&str>,
-        subject: Option<&str>,
-        from_address: Option<&str>,
-        date_sent: Option<DateTime<Utc>>,
-    ) -> Result<()> {
-        // Skip if no message_id - we can't track without a stable identifier
-        let Some(msg_id) = message_id else {
-            return Ok(());
-        };
-
-        let date_sent_str = date_sent.map(|d| d.to_rfc3339());
-
-        sqlx::query(
-            r#"
-            INSERT INTO messages (account, message_id, folder, uid, subject, from_address, date_sent)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-            ON CONFLICT(account, message_id) DO UPDATE SET
-                folder = ?3,
-                uid = ?4,
-                subject = COALESCE(?5, subject),
-                from_address = COALESCE(?6, from_address),
-                date_sent = COALESCE(?7, date_sent)
-            "#,
-        )
-        .bind(account)
-        .bind(msg_id)
-        .bind(folder)
-        .bind(uid)
-        .bind(subject)
-        .bind(from_address)
-        .bind(date_sent_str)
-        .execute(&self.pool)
-        .await
-        .context("Failed to upsert message")?;
-
-        Ok(())
     }
 
     /// Mark a message as read by the agent using message_id
@@ -387,7 +393,7 @@ impl StateManager {
     pub async fn get_selection(&self, account: &str) -> Result<Vec<SelectionEntry>> {
         let entries: Vec<SelectionEntry> = sqlx::query_as(
             r#"
-            SELECT account, folder, uid, message_id, subject
+            SELECT account, folder, uid, message_id, subject, shadow_uid
             FROM selections
             WHERE account = ?1
             ORDER BY added_at ASC
@@ -401,29 +407,6 @@ impl StateManager {
         Ok(entries)
     }
 
-    /// Get selection for a specific folder
-    pub async fn get_selection_for_folder(
-        &self,
-        account: &str,
-        folder: &str,
-    ) -> Result<Vec<SelectionEntry>> {
-        let entries: Vec<SelectionEntry> = sqlx::query_as(
-            r#"
-            SELECT account, folder, uid, message_id, subject
-            FROM selections
-            WHERE account = ?1 AND folder = ?2
-            ORDER BY added_at ASC
-            "#,
-        )
-        .bind(account)
-        .bind(folder)
-        .fetch_all(&self.pool)
-        .await
-        .context("Failed to get selection for folder")?;
-
-        Ok(entries)
-    }
-
     /// Clear all selections for an account
     pub async fn clear_selection(&self, account: &str) -> Result<usize> {
         let result = sqlx::query("DELETE FROM selections WHERE account = ?1")
@@ -431,18 +414,6 @@ impl StateManager {
             .execute(&self.pool)
             .await
             .context("Failed to clear selection")?;
-
-        Ok(result.rows_affected() as usize)
-    }
-
-    /// Clear selection for a specific folder
-    pub async fn clear_selection_for_folder(&self, account: &str, folder: &str) -> Result<usize> {
-        let result = sqlx::query("DELETE FROM selections WHERE account = ?1 AND folder = ?2")
-            .bind(account)
-            .bind(folder)
-            .execute(&self.pool)
-            .await
-            .context("Failed to clear selection for folder")?;
 
         Ok(result.rows_affected() as usize)
     }
@@ -644,5 +615,153 @@ impl StateManager {
             .context("Failed to clear draft")?;
 
         Ok(result.rows_affected() > 0)
+    }
+
+    // ============================================================
+    // Shadow UID methods
+    // ============================================================
+
+    /// Get or create a shadow UID for a message.
+    /// Returns the shadow_uid (messages.id) for the message.
+    /// If the message doesn't exist, it's created and the new id is returned.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn get_or_create_shadow_uid(
+        &self,
+        account: &str,
+        folder: &str,
+        imap_uid: u32,
+        message_id: Option<&str>,
+        subject: Option<&str>,
+        from_address: Option<&str>,
+        date_sent: Option<DateTime<Utc>>,
+    ) -> Result<i64> {
+        // We need a message_id to track messages - if none, we can't create a shadow UID
+        let Some(msg_id) = message_id else {
+            return Err(anyhow::anyhow!(
+                "Cannot create shadow UID: message has no Message-ID header"
+            ));
+        };
+
+        let date_sent_str = date_sent.map(|d| d.to_rfc3339());
+
+        // Try to insert or update, then get the id
+        sqlx::query(
+            r#"
+            INSERT INTO messages (account, message_id, folder, uid, subject, from_address, date_sent)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            ON CONFLICT(account, message_id) DO UPDATE SET
+                folder = ?3,
+                uid = ?4,
+                subject = COALESCE(?5, subject),
+                from_address = COALESCE(?6, from_address),
+                date_sent = COALESCE(?7, date_sent)
+            "#,
+        )
+        .bind(account)
+        .bind(msg_id)
+        .bind(folder)
+        .bind(imap_uid)
+        .bind(subject)
+        .bind(from_address)
+        .bind(date_sent_str)
+        .execute(&self.pool)
+        .await
+        .context("Failed to upsert message for shadow UID")?;
+
+        // Now fetch the id
+        let result: (i64,) =
+            sqlx::query_as("SELECT id FROM messages WHERE account = ?1 AND message_id = ?2")
+                .bind(account)
+                .bind(msg_id)
+                .fetch_one(&self.pool)
+                .await
+                .context("Failed to get shadow UID after upsert")?;
+
+        Ok(result.0)
+    }
+
+    /// Get a message record by shadow UID
+    pub async fn get_message_by_shadow_uid(
+        &self,
+        account: &str,
+        shadow_uid: i64,
+    ) -> Result<Option<MessageRecord>> {
+        let record: Option<MessageRecord> = sqlx::query_as(
+            r#"
+            SELECT id, account, message_id, folder, uid, subject, from_address, date_sent, agent_read
+            FROM messages
+            WHERE account = ?1 AND id = ?2
+            "#,
+        )
+        .bind(account)
+        .bind(shadow_uid)
+        .fetch_optional(&self.pool)
+        .await
+        .context("Failed to get message by shadow UID")?;
+
+        Ok(record)
+    }
+
+    /// Resolve shadow UIDs to their current IMAP locations
+    /// Returns a list of resolved messages with their current folder and IMAP UID
+    pub async fn resolve_shadow_uids(
+        &self,
+        account: &str,
+        shadow_uids: &[i64],
+    ) -> Result<Vec<ResolvedMessage>> {
+        if shadow_uids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut resolved = Vec::with_capacity(shadow_uids.len());
+
+        for &shadow_uid in shadow_uids {
+            let record = self.get_message_by_shadow_uid(account, shadow_uid).await?;
+
+            match record {
+                Some(msg) => {
+                    resolved.push(ResolvedMessage {
+                        shadow_uid: msg.id,
+                        folder: msg.folder,
+                        imap_uid: msg.uid as u32,
+                        message_id: Some(msg.message_id),
+                    });
+                }
+                None => {
+                    return Err(anyhow::anyhow!(
+                        "Message {} not found. Run 'inbox' or 'query' first to discover messages.",
+                        shadow_uid
+                    ));
+                }
+            }
+        }
+
+        Ok(resolved)
+    }
+
+    /// Update message location by message_id (used after move when we know the message_id but need to find new UID)
+    pub async fn update_message_location_by_message_id(
+        &self,
+        account: &str,
+        message_id: &str,
+        new_folder: &str,
+        new_imap_uid: u32,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            UPDATE messages
+            SET folder = ?3, uid = ?4
+            WHERE account = ?1 AND message_id = ?2
+            "#,
+        )
+        .bind(account)
+        .bind(message_id)
+        .bind(new_folder)
+        .bind(new_imap_uid)
+        .execute(&self.pool)
+        .await
+        .context("Failed to update message location by message_id")?;
+
+        Ok(())
     }
 }

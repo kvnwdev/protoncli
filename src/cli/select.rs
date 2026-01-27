@@ -8,16 +8,15 @@ use serde::Serialize;
 pub struct SelectionOutput {
     pub account: String,
     pub total_count: usize,
-    pub folders: Vec<FolderSelection>,
+    pub messages: Vec<SelectionMessage>,
 }
 
 #[derive(Serialize)]
-pub struct FolderSelection {
+pub struct SelectionMessage {
+    pub id: i64,
     pub folder: String,
-    pub count: usize,
-    pub uids: Vec<u32>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub subjects: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -25,45 +24,44 @@ pub struct SelectActionOutput {
     pub action: String,
     pub account: String,
     pub count: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub folder: Option<String>,
 }
 
-/// Add UIDs to the selection
-pub async fn add_to_selection(
-    uids: Vec<u32>,
-    folder: &str,
-    output_format: Option<&str>,
-) -> Result<()> {
+/// Add shadow UIDs to the selection
+pub async fn add_to_selection(ids: Vec<i64>, output_format: Option<&str>) -> Result<()> {
     let config = Config::load()?;
     let account = config
         .get_default_account()
         .ok_or_else(|| anyhow!("No default account configured"))?;
 
-    if uids.is_empty() {
-        return Err(anyhow!("No UIDs specified"));
+    if ids.is_empty() {
+        return Err(anyhow!("No message IDs specified"));
     }
 
     let state = StateManager::new().await?;
 
-    // Create entries without message_id or subject (those would need to be fetched from IMAP)
-    let entries: Vec<(u32, Option<&str>, Option<&str>)> =
-        uids.iter().map(|&uid| (uid, None, None)).collect();
+    // Resolve shadow UIDs to get their info
+    let resolved = state.resolve_shadow_uids(&account.email, &ids).await?;
 
-    let count = state
-        .add_to_selection(&account.email, folder, &entries)
-        .await?;
+    // Add to selection with shadow_uid info
+    let mut count = 0;
+    for msg in &resolved {
+        // Add the resolved message to selection with its shadow_uid
+        let entries: Vec<(u32, Option<&str>, Option<&str>)> =
+            vec![(msg.imap_uid, msg.message_id.as_deref(), None)];
+        count += state
+            .add_to_selection(&account.email, &msg.folder, &entries)
+            .await?;
+    }
 
     let output = SelectActionOutput {
         action: "add".to_string(),
         account: account.email.clone(),
         count,
-        folder: Some(folder.to_string()),
     };
 
     match output_format.unwrap_or("text") {
         "json" => json::print_json(&output)?,
-        _ => println!("✓ Added {} UID(s) to selection (folder: {})", count, folder),
+        _ => println!("✓ Added {} message(s) to selection", count),
     }
 
     Ok(())
@@ -83,7 +81,7 @@ pub async fn add_last_query_to_selection(folder: &str, output_format: Option<&st
 
     if results.is_empty() {
         return Err(anyhow!(
-            "No previous query results for folder '{}'. Run a query with --select first.",
+            "No previous query results for folder '{}'. Run a query first.",
             folder
         ));
     }
@@ -102,50 +100,50 @@ pub async fn add_last_query_to_selection(folder: &str, output_format: Option<&st
         action: "add_last".to_string(),
         account: account.email.clone(),
         count,
-        folder: Some(folder.to_string()),
     };
 
     match output_format.unwrap_or("text") {
         "json" => json::print_json(&output)?,
-        _ => println!(
-            "✓ Added {} message(s) from last query to selection (folder: {})",
-            count, folder
-        ),
+        _ => println!("✓ Added {} message(s) from last query to selection", count),
     }
 
     Ok(())
 }
 
-/// Remove UIDs from the selection
-pub async fn remove_from_selection(
-    uids: Vec<u32>,
-    folder: &str,
-    output_format: Option<&str>,
-) -> Result<()> {
+/// Remove shadow UIDs from the selection
+pub async fn remove_from_selection(ids: Vec<i64>, output_format: Option<&str>) -> Result<()> {
     let config = Config::load()?;
     let account = config
         .get_default_account()
         .ok_or_else(|| anyhow!("No default account configured"))?;
 
-    if uids.is_empty() {
-        return Err(anyhow!("No UIDs specified"));
+    if ids.is_empty() {
+        return Err(anyhow!("No message IDs specified"));
     }
 
     let state = StateManager::new().await?;
-    let count = state
-        .remove_from_selection(&account.email, folder, &uids)
-        .await?;
+
+    // Resolve shadow UIDs to get their info
+    let resolved = state.resolve_shadow_uids(&account.email, &ids).await?;
+
+    // Remove from selection by folder
+    let mut count = 0;
+    for msg in &resolved {
+        let removed = state
+            .remove_from_selection(&account.email, &msg.folder, &[msg.imap_uid])
+            .await?;
+        count += removed;
+    }
 
     let output = SelectActionOutput {
         action: "remove".to_string(),
         account: account.email.clone(),
         count,
-        folder: Some(folder.to_string()),
     };
 
     match output_format.unwrap_or("text") {
         "json" => json::print_json(&output)?,
-        _ => println!("✓ Removed {} UID(s) from selection", count),
+        _ => println!("✓ Removed {} message(s) from selection", count),
     }
 
     Ok(())
@@ -166,59 +164,43 @@ pub async fn show_selection(output_format: Option<&str>) -> Result<()> {
             "json" => json::print_json(&SelectionOutput {
                 account: account.email.clone(),
                 total_count: 0,
-                folders: vec![],
+                messages: vec![],
             })?,
             _ => println!("Selection is empty"),
         }
         return Ok(());
     }
 
-    // Group by folder
-    let mut folder_map: std::collections::HashMap<String, Vec<_>> =
-        std::collections::HashMap::new();
-    for entry in &entries {
-        folder_map
-            .entry(entry.folder.clone())
-            .or_default()
-            .push(entry);
-    }
-
-    let folders: Vec<FolderSelection> = folder_map
-        .into_iter()
-        .map(|(folder, entries)| {
-            let uids: Vec<u32> = entries.iter().map(|e| e.uid as u32).collect();
-            let subjects: Vec<String> = entries.iter().filter_map(|e| e.subject.clone()).collect();
-            FolderSelection {
-                folder,
-                count: uids.len(),
-                uids,
-                subjects,
-            }
+    // Convert entries to messages with shadow UIDs
+    let messages: Vec<SelectionMessage> = entries
+        .iter()
+        .filter_map(|entry| {
+            entry.shadow_uid.map(|id| SelectionMessage {
+                id,
+                folder: entry.folder.clone(),
+                subject: entry.subject.clone(),
+            })
         })
         .collect();
 
     let output = SelectionOutput {
         account: account.email.clone(),
-        total_count: entries.len(),
-        folders,
+        total_count: messages.len(),
+        messages,
     };
 
     match output_format.unwrap_or("text") {
         "json" => json::print_json(&output)?,
+        "table" => {
+            print_selection_table(&output);
+        }
         _ => {
             println!("Selection for {}:", output.account);
             println!("Total: {} message(s)", output.total_count);
             println!();
-            for folder in &output.folders {
-                println!("  {} ({} messages):", folder.folder, folder.count);
-                for (i, uid) in folder.uids.iter().enumerate() {
-                    let subject = folder.subjects.get(i).map(|s| s.as_str()).unwrap_or("");
-                    if subject.is_empty() {
-                        println!("    - UID {}", uid);
-                    } else {
-                        println!("    - UID {}: {}", uid, subject);
-                    }
-                }
+            for msg in &output.messages {
+                let subject_str = msg.subject.as_deref().unwrap_or("(no subject)");
+                println!("  ID {}: {} - {}", msg.id, msg.folder, subject_str);
             }
         }
     }
@@ -240,7 +222,6 @@ pub async fn clear_selection(output_format: Option<&str>) -> Result<()> {
         action: "clear".to_string(),
         account: account.email.clone(),
         count,
-        folder: None,
     };
 
     match output_format.unwrap_or("text") {
@@ -278,4 +259,67 @@ pub async fn count_selection(output_format: Option<&str>) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Print selection as a formatted table
+fn print_selection_table(output: &SelectionOutput) {
+    println!(
+        "Selection for {} ({} messages)",
+        output.account, output.total_count
+    );
+
+    if output.messages.is_empty() {
+        println!("No messages in selection.");
+        return;
+    }
+
+    // Column widths
+    let id_width = 8;
+    let folder_width = 20;
+    let subject_width = 50;
+
+    // Header
+    println!(
+        "{:>id_w$}  {:folder_w$}  SUBJECT",
+        "ID",
+        "FOLDER",
+        id_w = id_width,
+        folder_w = folder_width,
+    );
+
+    // Separator
+    println!(
+        "{:->id_w$}  {:->folder_w$}  {:->subj_w$}",
+        "",
+        "",
+        "",
+        id_w = id_width,
+        folder_w = folder_width,
+        subj_w = subject_width,
+    );
+
+    // Rows
+    for msg in &output.messages {
+        let subject = msg.subject.as_deref().unwrap_or("(no subject)");
+        let subject_truncated = if subject.len() > subject_width {
+            format!("{}...", &subject[..subject_width - 3])
+        } else {
+            subject.to_string()
+        };
+
+        let folder_truncated = if msg.folder.len() > folder_width {
+            format!("{}...", &msg.folder[..folder_width - 3])
+        } else {
+            msg.folder.clone()
+        };
+
+        println!(
+            "{:>id_w$}  {:folder_w$}  {}",
+            msg.id,
+            folder_truncated,
+            subject_truncated,
+            id_w = id_width,
+            folder_w = folder_width,
+        );
+    }
 }

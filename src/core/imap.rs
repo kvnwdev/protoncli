@@ -143,7 +143,8 @@ impl ImapClient {
             .await
             .context("Failed to search messages")?;
 
-        let uids: Vec<u32> = uids_set.into_iter().collect();
+        let mut uids: Vec<u32> = uids_set.into_iter().collect();
+        uids.sort(); // Ensure deterministic ordering
 
         if uids.is_empty() {
             return Ok(vec![]);
@@ -302,6 +303,9 @@ impl ImapClient {
                 skipped_count
             );
         }
+
+        // Sort by UID descending (newest first) for deterministic ordering
+        messages.sort_by(|a, b| b.uid.cmp(&a.uid));
 
         Ok(messages)
     }

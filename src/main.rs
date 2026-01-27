@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(name = "protoncli")]
-#[command(version = "0.3.5")]
+#[command(version = "0.4.0")]
 #[command(about = "A production-ready CLI email client for ProtonMail Bridge", long_about = None)]
 struct Cli {
     #[command(subcommand)]
@@ -79,7 +79,7 @@ enum Commands {
         /// Limit number of messages
         #[arg(long)]
         limit: Option<usize>,
-        /// Output format (json or markdown)
+        /// Output format (json, markdown, or table)
         #[arg(long, short)]
         output: Option<String>,
         /// Query expression (Gmail-style syntax)
@@ -91,10 +91,10 @@ enum Commands {
     },
     /// Read a message
     Read {
-        /// Message UID
-        uid: u32,
-        /// Folder to read from
-        #[arg(long, default_value = "INBOX")]
+        /// Message ID (shadow UID from inbox/query output)
+        id: i64,
+        /// Folder to read from (optional, resolved from shadow UID)
+        #[arg(long)]
         folder: Option<String>,
         /// Output format (json, markdown, raw)
         #[arg(long, short, default_value = "markdown")]
@@ -137,16 +137,13 @@ enum Commands {
     QueryHelp,
     /// Move messages to another folder
     Move {
-        /// Message UID(s)
-        uids: Vec<u32>,
-        /// Source folder
-        #[arg(long, default_value = "INBOX")]
-        from: String,
+        /// Message ID(s) (shadow UIDs from inbox/query output)
+        ids: Vec<i64>,
         /// Destination folder
         #[arg(long, required = true)]
         to: String,
-        /// Use selection instead of UIDs
-        #[arg(long, conflicts_with = "uids")]
+        /// Use selection instead of IDs
+        #[arg(long, conflicts_with = "ids")]
         selection: bool,
         /// Stage action as draft without executing
         #[arg(long)]
@@ -160,16 +157,13 @@ enum Commands {
     },
     /// Copy messages to another folder
     Copy {
-        /// Message UID(s)
-        uids: Vec<u32>,
-        /// Source folder
-        #[arg(long, default_value = "INBOX")]
-        from: String,
+        /// Message ID(s) (shadow UIDs from inbox/query output)
+        ids: Vec<i64>,
         /// Destination folder
         #[arg(long, required = true)]
         to: String,
-        /// Use selection instead of UIDs
-        #[arg(long, conflicts_with = "uids")]
+        /// Use selection instead of IDs
+        #[arg(long, conflicts_with = "ids")]
         selection: bool,
         /// Stage action as draft without executing
         #[arg(long)]
@@ -183,19 +177,16 @@ enum Commands {
     },
     /// Delete messages (move to Trash or permanent delete)
     Delete {
-        /// Message UID(s)
-        uids: Vec<u32>,
-        /// Source folder
-        #[arg(long, default_value = "INBOX")]
-        from: String,
+        /// Message ID(s) (shadow UIDs from inbox/query output)
+        ids: Vec<i64>,
         /// Permanently delete (bypasses Trash)
         #[arg(long)]
         permanent: bool,
         /// Skip confirmation for permanent delete
         #[arg(long, short)]
         yes: bool,
-        /// Use selection instead of UIDs
-        #[arg(long, conflicts_with = "uids")]
+        /// Use selection instead of IDs
+        #[arg(long, conflicts_with = "ids")]
         selection: bool,
         /// Stage action as draft without executing
         #[arg(long)]
@@ -209,13 +200,10 @@ enum Commands {
     },
     /// Archive messages (move to Archive folder)
     Archive {
-        /// Message UID(s)
-        uids: Vec<u32>,
-        /// Source folder
-        #[arg(long, default_value = "INBOX")]
-        from: String,
-        /// Use selection instead of UIDs
-        #[arg(long, conflicts_with = "uids")]
+        /// Message ID(s) (shadow UIDs from inbox/query output)
+        ids: Vec<i64>,
+        /// Use selection instead of IDs
+        #[arg(long, conflicts_with = "ids")]
         selection: bool,
         /// Stage action as draft without executing
         #[arg(long)]
@@ -229,11 +217,8 @@ enum Commands {
     },
     /// Modify message flags (read/unread, starred, labels) and optionally move
     Flag {
-        /// Message UID(s)
-        uids: Vec<u32>,
-        /// Source folder
-        #[arg(long, default_value = "INBOX")]
-        from: String,
+        /// Message ID(s) (shadow UIDs from inbox/query output)
+        ids: Vec<i64>,
         /// Mark as read
         #[arg(long)]
         read: bool,
@@ -255,8 +240,8 @@ enum Commands {
         /// Move to folder after applying flags
         #[arg(long = "move")]
         move_to: Option<String>,
-        /// Use selection instead of UIDs
-        #[arg(long, conflicts_with = "uids")]
+        /// Use selection instead of IDs
+        #[arg(long, conflicts_with = "ids")]
         selection: bool,
         /// Stage action as draft without executing
         #[arg(long)]
@@ -298,13 +283,10 @@ enum AccountAction {
 
 #[derive(Subcommand)]
 enum SelectAction {
-    /// Add UIDs to selection
+    /// Add IDs to selection
     Add {
-        /// Message UIDs
-        uids: Vec<u32>,
-        /// Folder containing the messages
-        #[arg(long, default_value = "INBOX")]
-        folder: String,
+        /// Message IDs (shadow UIDs from inbox/query output)
+        ids: Vec<i64>,
         /// Output format (json or text)
         #[arg(long, short)]
         output: Option<String>,
@@ -318,13 +300,10 @@ enum SelectAction {
         #[arg(long, short)]
         output: Option<String>,
     },
-    /// Remove UIDs from selection
+    /// Remove IDs from selection
     Remove {
-        /// Message UIDs
-        uids: Vec<u32>,
-        /// Folder containing the messages
-        #[arg(long, default_value = "INBOX")]
-        folder: String,
+        /// Message IDs (shadow UIDs from inbox/query output)
+        ids: Vec<i64>,
         /// Output format (json or text)
         #[arg(long, short)]
         output: Option<String>,
@@ -504,19 +483,15 @@ async fn main() -> anyhow::Result<()> {
             .await?
         }
         Commands::Select { action } => match action {
-            SelectAction::Add {
-                uids,
-                folder,
-                output,
-            } => cli::select::add_to_selection(uids, &folder, output.as_deref()).await?,
+            SelectAction::Add { ids, output } => {
+                cli::select::add_to_selection(ids, output.as_deref()).await?
+            }
             SelectAction::Last { folder, output } => {
                 cli::select::add_last_query_to_selection(&folder, output.as_deref()).await?
             }
-            SelectAction::Remove {
-                uids,
-                folder,
-                output,
-            } => cli::select::remove_from_selection(uids, &folder, output.as_deref()).await?,
+            SelectAction::Remove { ids, output } => {
+                cli::select::remove_from_selection(ids, output.as_deref()).await?
+            }
             SelectAction::Show { output } => cli::select::show_selection(output.as_deref()).await?,
             SelectAction::Clear { output } => {
                 cli::select::clear_selection(output.as_deref()).await?
@@ -550,14 +525,13 @@ async fn main() -> anyhow::Result<()> {
             .await?
         }
         Commands::Read {
-            uid,
+            id,
             folder,
             output,
             mark_read,
             raw,
         } => {
-            cli::message::read_message(uid, folder.as_deref(), Some(&output), mark_read, raw)
-                .await?
+            cli::message::read_message(id, folder.as_deref(), Some(&output), mark_read, raw).await?
         }
         Commands::Send {
             from,
@@ -571,32 +545,27 @@ async fn main() -> anyhow::Result<()> {
         } => cli::send::send_email(from, to, cc, bcc, subject, body, body_file, attach).await?,
         Commands::QueryHelp => show_query_help(),
         Commands::Move {
-            uids,
-            from,
+            ids,
             to,
             selection,
             draft,
             keep,
             output,
         } => {
-            cli::actions::move_messages(uids, &from, &to, selection, draft, keep, output.as_deref())
-                .await?
+            cli::actions::move_messages(ids, &to, selection, draft, keep, output.as_deref()).await?
         }
         Commands::Copy {
-            uids,
-            from,
+            ids,
             to,
             selection,
             draft,
             keep,
             output,
         } => {
-            cli::actions::copy_messages(uids, &from, &to, selection, draft, keep, output.as_deref())
-                .await?
+            cli::actions::copy_messages(ids, &to, selection, draft, keep, output.as_deref()).await?
         }
         Commands::Delete {
-            uids,
-            from,
+            ids,
             permanent,
             yes,
             selection,
@@ -605,8 +574,7 @@ async fn main() -> anyhow::Result<()> {
             output,
         } => {
             cli::actions::delete_messages(
-                uids,
-                &from,
+                ids,
                 permanent,
                 yes,
                 selection,
@@ -617,19 +585,14 @@ async fn main() -> anyhow::Result<()> {
             .await?
         }
         Commands::Archive {
-            uids,
-            from,
+            ids,
             selection,
             draft,
             keep,
             output,
-        } => {
-            cli::actions::archive_messages(uids, &from, selection, draft, keep, output.as_deref())
-                .await?
-        }
+        } => cli::actions::archive_messages(ids, selection, draft, keep, output.as_deref()).await?,
         Commands::Flag {
-            uids,
-            from,
+            ids,
             read,
             unread,
             starred,
@@ -643,8 +606,7 @@ async fn main() -> anyhow::Result<()> {
             output,
         } => {
             cli::actions::modify_flags(
-                uids,
-                &from,
+                ids,
                 read,
                 unread,
                 starred,

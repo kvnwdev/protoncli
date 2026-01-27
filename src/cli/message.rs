@@ -1,9 +1,9 @@
 use crate::core::imap::ImapClient;
-use crate::core::state::StateManager;
+use crate::core::state::{validate_shadow_uids, StateManager};
 use crate::models::config::Config;
 use crate::models::filter::MessageFilter;
 use crate::models::message::Message;
-use crate::output::{json, markdown};
+use crate::output::{json, markdown, table};
 use anyhow::{anyhow, Result};
 use serde::Serialize;
 
@@ -56,9 +56,11 @@ pub async fn list_inbox(
     client.select_folder("INBOX").await?;
     let mut messages = client.fetch_messages(&filter).await?;
 
+    // Initialize state manager for shadow UID assignment
+    let state = StateManager::new().await?;
+
     // If agent_unread filter is set, check the database
     if agent_unread {
-        let state = StateManager::new().await?;
         let mut filtered_messages = Vec::new();
 
         for message in messages {
@@ -75,21 +77,26 @@ pub async fn list_inbox(
         }
 
         messages = filtered_messages;
-    } else {
-        // Update state database with message metadata
-        let state = StateManager::new().await?;
-        for message in &messages {
-            state
-                .upsert_message(
+    }
+
+    // Assign shadow UIDs to all messages and update state database
+    for message in &mut messages {
+        message.folder = Some("INBOX".to_string());
+
+        // Get or create shadow UID for this message
+        if let Some(ref msg_id) = message.message_id {
+            let shadow_uid = state
+                .get_or_create_shadow_uid(
                     &account.email,
                     "INBOX",
                     message.uid,
-                    message.message_id.as_deref(),
+                    Some(msg_id),
                     message.subject.as_deref(),
                     message.from.as_ref().map(|f| f.address.as_str()),
                     message.date,
                 )
                 .await?;
+            message.shadow_uid = Some(shadow_uid);
         }
     }
 
@@ -106,6 +113,9 @@ pub async fn list_inbox(
         "markdown" => {
             markdown::print_message_list(&account.email, "INBOX", &messages);
         }
+        "table" => {
+            table::print_message_table(&account.email, "INBOX", &messages);
+        }
         _ => {
             return Err(anyhow!("Unsupported output format"));
         }
@@ -115,46 +125,52 @@ pub async fn list_inbox(
 }
 
 pub async fn read_message(
-    uid: u32,
-    folder: Option<&str>,
+    shadow_uid: i64,
+    folder_override: Option<&str>,
     output_format: Option<&str>,
     mark_read: bool,
     show_raw: bool,
 ) -> Result<()> {
+    // Validate shadow UID
+    validate_shadow_uids(&[shadow_uid])?;
+
     let config = Config::load()?;
     let account = config
         .get_default_account()
         .ok_or_else(|| anyhow!("No default account configured"))?;
 
-    let folder_name = folder.unwrap_or("INBOX");
+    let state = StateManager::new().await?;
+
+    // Resolve shadow UID to current IMAP location
+    let resolved = state
+        .resolve_shadow_uids(&account.email, &[shadow_uid])
+        .await?;
+    let msg_info = resolved
+        .first()
+        .ok_or_else(|| anyhow!("Message {} not found", shadow_uid))?;
+
+    // Use folder override if provided, otherwise use resolved folder
+    let folder_name = folder_override.unwrap_or(&msg_info.folder);
 
     // Connect and fetch message
     let mut client = ImapClient::connect(account).await?;
-    let message = client
-        .fetch_message_by_uid(uid, folder_name, show_raw)
+    let mut message = client
+        .fetch_message_by_uid(msg_info.imap_uid, folder_name, show_raw)
         .await?;
+
+    // Set shadow_uid on the message
+    message.shadow_uid = Some(shadow_uid);
+    message.folder = Some(folder_name.to_string());
 
     // Mark as read in IMAP if requested
     if mark_read {
-        client.mark_message_read(uid, folder_name).await?;
+        client
+            .mark_message_read(msg_info.imap_uid, folder_name)
+            .await?;
     }
 
     // Always mark as agent-read in local state (using message_id as stable identifier)
     if let Some(ref msg_id) = message.message_id {
-        let state = StateManager::new().await?;
-        // First upsert to ensure the message exists in our database
-        state
-            .upsert_message(
-                &account.email,
-                folder_name,
-                uid,
-                Some(msg_id),
-                message.subject.as_deref(),
-                message.from.as_ref().map(|f| f.address.as_str()),
-                message.date,
-            )
-            .await?;
-        // Then mark as agent-read
         state.mark_agent_read(&account.email, msg_id).await?;
     }
 
