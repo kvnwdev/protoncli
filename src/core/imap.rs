@@ -261,7 +261,7 @@ impl ImapClient {
                             if let Some(date) = parsed_mail.date() {
                                 message.date = Some(
                                     DateTime::from_timestamp(date.to_timestamp(), 0)
-                                        .unwrap_or_else(|| Utc::now()),
+                                        .unwrap_or_else(Utc::now),
                                 );
                             }
 

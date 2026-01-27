@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 use sqlx::{migrate::MigrateDatabase, sqlite::SqlitePool, FromRow, Sqlite};
 use std::path::PathBuf;
 
+/// Type alias for selection/query entry tuple: (uid, message_id, subject, shadow_uid)
+pub type SelectionEntryTuple<'a> = (u32, Option<&'a str>, Option<&'a str>, Option<i64>);
+
 /// A message in the selection
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct SelectionEntry {
@@ -330,7 +333,7 @@ impl StateManager {
         &self,
         account: &str,
         folder: &str,
-        entries: &[(u32, Option<&str>, Option<&str>, Option<i64>)], // (uid, message_id, subject, shadow_uid)
+        entries: &[SelectionEntryTuple<'_>],
     ) -> Result<usize> {
         let mut count = 0;
         for (uid, message_id, subject, shadow_uid) in entries {
@@ -441,7 +444,7 @@ impl StateManager {
         account: &str,
         folder: &str,
         query_string: &str,
-        results: &[(u32, Option<&str>, Option<&str>, Option<i64>)], // (uid, message_id, subject, shadow_uid)
+        results: &[SelectionEntryTuple<'_>],
     ) -> Result<()> {
         // Update or insert query history
         sqlx::query(

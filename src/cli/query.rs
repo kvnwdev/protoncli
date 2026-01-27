@@ -232,7 +232,7 @@ pub async fn execute_query(
         .first()
         .map(|s| s.as_str())
         .unwrap_or("INBOX");
-    let result_entries: Vec<(u32, Option<&str>, Option<&str>, Option<i64>)> = all_messages
+    let result_entries: Vec<crate::core::state::SelectionEntryTuple<'_>> = all_messages
         .iter()
         .map(|msg| {
             (
