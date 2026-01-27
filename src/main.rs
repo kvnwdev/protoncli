@@ -574,7 +574,12 @@ async fn main() -> anyhow::Result<()> {
             output,
         } => {
             cli::actions::delete_messages(
-                ids, permanent, yes, selection, draft, keep,
+                ids,
+                permanent,
+                yes,
+                selection,
+                draft,
+                keep,
                 output.as_deref(),
             )
             .await?
@@ -585,9 +590,7 @@ async fn main() -> anyhow::Result<()> {
             draft,
             keep,
             output,
-        } => {
-            cli::actions::archive_messages(ids, selection, draft, keep, output.as_deref()).await?
-        }
+        } => cli::actions::archive_messages(ids, selection, draft, keep, output.as_deref()).await?,
         Commands::Flag {
             ids,
             read,
@@ -603,7 +606,16 @@ async fn main() -> anyhow::Result<()> {
             output,
         } => {
             cli::actions::modify_flags(
-                ids, read, unread, starred, unstarred, labels, unlabels, move_to, selection, draft,
+                ids,
+                read,
+                unread,
+                starred,
+                unstarred,
+                labels,
+                unlabels,
+                move_to,
+                selection,
+                draft,
                 keep,
                 output.as_deref(),
             )

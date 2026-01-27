@@ -83,10 +83,7 @@ async fn resolve_shadow_uids_by_folder(
     // Group by folder
     let mut by_folder: HashMap<String, Vec<ResolvedMessage>> = HashMap::new();
     for msg in resolved {
-        by_folder
-            .entry(msg.folder.clone())
-            .or_default()
-            .push(msg);
+        by_folder.entry(msg.folder.clone()).or_default().push(msg);
     }
 
     Ok((shadow_uids, by_folder))
@@ -817,7 +814,12 @@ pub async fn modify_flags(
             for msg in messages {
                 if let Some(ref msg_id) = msg.message_id {
                     state
-                        .update_message_location_by_message_id(&account.email, msg_id, &dest_resolved, 0)
+                        .update_message_location_by_message_id(
+                            &account.email,
+                            msg_id,
+                            &dest_resolved,
+                            0,
+                        )
                         .await?;
                 }
             }

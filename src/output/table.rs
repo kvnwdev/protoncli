@@ -137,7 +137,13 @@ mod tests {
     use crate::models::message::{EmailAddress, MessageFlags};
     use chrono::TimeZone;
 
-    fn make_test_message(shadow_uid: i64, uid: u32, subject: &str, from_name: &str, seen: bool) -> Message {
+    fn make_test_message(
+        shadow_uid: i64,
+        uid: u32,
+        subject: &str,
+        from_name: &str,
+        seen: bool,
+    ) -> Message {
         let mut msg = Message::new(uid);
         msg.shadow_uid = Some(shadow_uid);
         msg.subject = Some(subject.to_string());
@@ -145,7 +151,11 @@ mod tests {
             name: Some(from_name.to_string()),
             address: "test@example.com".to_string(),
         });
-        msg.date = Some(chrono::Utc.with_ymd_and_hms(2024, 1, 15, 10, 30, 0).unwrap());
+        msg.date = Some(
+            chrono::Utc
+                .with_ymd_and_hms(2024, 1, 15, 10, 30, 0)
+                .unwrap(),
+        );
         msg.flags = MessageFlags {
             seen,
             flagged: false,

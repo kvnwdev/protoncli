@@ -104,10 +104,7 @@ pub async fn add_last_query_to_selection(folder: &str, output_format: Option<&st
 
     match output_format.unwrap_or("text") {
         "json" => json::print_json(&output)?,
-        _ => println!(
-            "✓ Added {} message(s) from last query to selection",
-            count
-        ),
+        _ => println!("✓ Added {} message(s) from last query to selection", count),
     }
 
     Ok(())

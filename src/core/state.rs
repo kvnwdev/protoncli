@@ -213,18 +213,19 @@ impl StateManager {
             .context("Failed to run migration 003")?;
 
         // Run migration 004 - shadow UIDs (uses separate statements for ALTER TABLE)
-        let migration_004_applied: Option<(i32,)> = sqlx::query_as(
-            "SELECT version FROM schema_migrations WHERE version = 4",
-        )
-        .fetch_optional(&pool)
-        .await
-        .context("Failed to check migration 004 status")?;
+        let migration_004_applied: Option<(i32,)> =
+            sqlx::query_as("SELECT version FROM schema_migrations WHERE version = 4")
+                .fetch_optional(&pool)
+                .await
+                .context("Failed to check migration 004 status")?;
 
         if migration_004_applied.is_none() {
             // Add shadow_uid column to selections if it doesn't exist
-            let _ = sqlx::query("ALTER TABLE selections ADD COLUMN shadow_uid INTEGER REFERENCES messages(id)")
-                .execute(&pool)
-                .await;
+            let _ = sqlx::query(
+                "ALTER TABLE selections ADD COLUMN shadow_uid INTEGER REFERENCES messages(id)",
+            )
+            .execute(&pool)
+            .await;
 
             // Add shadow_uid column to query_history_results if it doesn't exist
             let _ = sqlx::query("ALTER TABLE query_history_results ADD COLUMN shadow_uid INTEGER REFERENCES messages(id)")
@@ -237,10 +238,12 @@ impl StateManager {
                 .await
                 .context("Failed to create idx_messages_id")?;
 
-            sqlx::query("CREATE INDEX IF NOT EXISTS idx_selections_shadow_uid ON selections(shadow_uid)")
-                .execute(&pool)
-                .await
-                .context("Failed to create idx_selections_shadow_uid")?;
+            sqlx::query(
+                "CREATE INDEX IF NOT EXISTS idx_selections_shadow_uid ON selections(shadow_uid)",
+            )
+            .execute(&pool)
+            .await
+            .context("Failed to create idx_selections_shadow_uid")?;
 
             sqlx::query("CREATE INDEX IF NOT EXISTS idx_query_history_results_shadow_uid ON query_history_results(shadow_uid)")
                 .execute(&pool)
@@ -666,14 +669,13 @@ impl StateManager {
         .context("Failed to upsert message for shadow UID")?;
 
         // Now fetch the id
-        let result: (i64,) = sqlx::query_as(
-            "SELECT id FROM messages WHERE account = ?1 AND message_id = ?2",
-        )
-        .bind(account)
-        .bind(msg_id)
-        .fetch_one(&self.pool)
-        .await
-        .context("Failed to get shadow UID after upsert")?;
+        let result: (i64,) =
+            sqlx::query_as("SELECT id FROM messages WHERE account = ?1 AND message_id = ?2")
+                .bind(account)
+                .bind(msg_id)
+                .fetch_one(&self.pool)
+                .await
+                .context("Failed to get shadow UID after upsert")?;
 
         Ok(result.0)
     }
