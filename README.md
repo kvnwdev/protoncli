@@ -312,6 +312,37 @@ cargo run -- inbox
 cargo run -- send --to user@example.com --subject "Test"
 ```
 
+## Releasing a New Version
+
+1. **Build and test locally:**
+   ```bash
+   cargo build --release
+   cargo test
+   ```
+
+2. **Create and push a new tag:**
+   ```bash
+   git tag vX.Y.Z
+   git push origin vX.Y.Z
+   ```
+
+3. **Create GitHub Release:**
+   - Go to https://github.com/kvnwdev/protoncli/releases
+   - Click "Create a new release"
+   - Select the tag, add release notes, publish
+
+4. **Update Homebrew formula:**
+   ```bash
+   # Get new SHA256
+   curl -sL https://github.com/kvnwdev/protoncli/archive/refs/tags/vX.Y.Z.tar.gz | shasum -a 256
+
+   # Update homebrew-protoncli/Formula/protoncli.rb with new version and sha256
+   cd /path/to/homebrew-protoncli
+   # Edit Formula/protoncli.rb
+   git commit -am "Update to vX.Y.Z"
+   git push
+   ```
+
 ## Architecture
 
 ```
