@@ -3,6 +3,7 @@ use crate::core::imap::ImapClient;
 use crate::models::account::Account;
 use crate::models::config::Config;
 use anyhow::{anyhow, Context, Result};
+use secrecy::{ExposeSecret, SecretString};
 
 pub async fn test_account(email: &str) -> Result<()> {
     let config = Config::load()?;
@@ -46,9 +47,11 @@ pub async fn add_account(email: &str) -> Result<()> {
     println!("Enter password for {}: ", email);
     use std::io::{self, Write};
     io::stdout().flush()?;
-    let password = rpassword::read_password().context("Failed to read password")?;
+    // Wrap in SecretString immediately to ensure password is zeroed on drop
+    let password =
+        SecretString::from(rpassword::read_password().context("Failed to read password")?);
 
-    if password.is_empty() {
+    if password.expose_secret().is_empty() {
         return Err(anyhow!("Password cannot be empty"));
     }
 
