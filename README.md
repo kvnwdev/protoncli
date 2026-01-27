@@ -293,6 +293,16 @@ log_level = "info"
 - Rust 1.70 or later
 - ProtonMail Bridge running locally
 
+### Setup
+
+After cloning, enable the pre-commit hook to ensure code formatting:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+This runs `cargo fmt --check` before each commit.
+
 ### Build
 
 ```bash
