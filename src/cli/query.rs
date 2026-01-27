@@ -2,7 +2,7 @@ use crate::core::imap::ImapClient;
 use crate::core::state::StateManager;
 use crate::models::config::Config;
 use crate::models::filter::MessageFilter;
-use crate::output::json;
+use crate::output::{json, table};
 use anyhow::{anyhow, Result};
 use serde::Serialize;
 
@@ -100,7 +100,31 @@ pub async fn execute_query(
     client.select_folder(&effective_folder).await?;
 
     // Fetch messages using the filter (IMAP does the filtering)
-    let messages = client.fetch_messages(&filter).await?;
+    let mut messages = client.fetch_messages(&filter).await?;
+
+    // Initialize state manager for shadow UID assignment
+    let state = StateManager::new().await?;
+
+    // Assign shadow UIDs to all messages
+    for message in &mut messages {
+        message.folder = Some(effective_folder.clone());
+
+        // Get or create shadow UID for this message
+        if let Some(ref msg_id) = message.message_id {
+            let shadow_uid = state
+                .get_or_create_shadow_uid(
+                    &account.email,
+                    &effective_folder,
+                    message.uid,
+                    Some(msg_id),
+                    message.subject.as_deref(),
+                    message.from.as_ref().map(|f| f.address.as_str()),
+                    message.date,
+                )
+                .await?;
+            message.shadow_uid = Some(shadow_uid);
+        }
+    }
 
     // Parse which fields to include
     let requested_fields = fields.map(parse_fields);
@@ -166,7 +190,6 @@ pub async fn execute_query(
         .collect();
 
     // Save query results for potential `select last`
-    let state = StateManager::new().await?;
     let result_entries: Vec<(u32, Option<&str>, Option<&str>)> = messages
         .iter()
         .map(|msg| (msg.uid, msg.message_id.as_deref(), msg.subject.as_deref()))
@@ -203,6 +226,13 @@ pub async fn execute_query(
     match output_format.unwrap_or("text") {
         "json" => json::print_json(&output)?,
         "markdown" => print_markdown(&output)?,
+        "table" => {
+            table::print_message_table(&output.account, &output.folder, &messages);
+            if let Some(count) = output.added_to_selection {
+                println!();
+                println!("✓ Added {} message(s) to selection", count);
+            }
+        }
         _ => print_text(&output)?,
     }
 

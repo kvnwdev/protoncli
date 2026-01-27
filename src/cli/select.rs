@@ -194,6 +194,9 @@ pub async fn show_selection(output_format: Option<&str>) -> Result<()> {
 
     match output_format.unwrap_or("text") {
         "json" => json::print_json(&output)?,
+        "table" => {
+            print_selection_table(&output);
+        }
         _ => {
             println!("Selection for {}:", output.account);
             println!("Total: {} message(s)", output.total_count);
@@ -259,4 +262,68 @@ pub async fn count_selection(output_format: Option<&str>) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Print selection as a formatted table
+fn print_selection_table(output: &SelectionOutput) {
+    println!(
+        "Selection for {} ({} messages)",
+        output.account, output.total_count
+    );
+
+    if output.messages.is_empty() {
+        println!("No messages in selection.");
+        return;
+    }
+
+    // Column widths
+    let id_width = 8;
+    let folder_width = 20;
+    let subject_width = 50;
+
+    // Header
+    println!(
+        "{:>id_w$}  {:folder_w$}  {}",
+        "ID",
+        "FOLDER",
+        "SUBJECT",
+        id_w = id_width,
+        folder_w = folder_width,
+    );
+
+    // Separator
+    println!(
+        "{:->id_w$}  {:->folder_w$}  {:->subj_w$}",
+        "",
+        "",
+        "",
+        id_w = id_width,
+        folder_w = folder_width,
+        subj_w = subject_width,
+    );
+
+    // Rows
+    for msg in &output.messages {
+        let subject = msg.subject.as_deref().unwrap_or("(no subject)");
+        let subject_truncated = if subject.len() > subject_width {
+            format!("{}...", &subject[..subject_width - 3])
+        } else {
+            subject.to_string()
+        };
+
+        let folder_truncated = if msg.folder.len() > folder_width {
+            format!("{}...", &msg.folder[..folder_width - 3])
+        } else {
+            msg.folder.clone()
+        };
+
+        println!(
+            "{:>id_w$}  {:folder_w$}  {}",
+            msg.id,
+            folder_truncated,
+            subject_truncated,
+            id_w = id_width,
+            folder_w = folder_width,
+        );
+    }
 }
