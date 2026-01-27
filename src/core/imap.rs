@@ -166,7 +166,7 @@ impl ImapClient {
         };
 
         let mut messages_stream = self.session
-            .fetch(&uid_set, fetch_query)
+            .uid_fetch(&uid_set, fetch_query)
             .await
             .context("Failed to fetch messages")?;
 
@@ -406,7 +406,7 @@ impl ImapClient {
         self.select_folder(folder).await?;
 
         let mut store_stream = self.session
-            .store(&uid.to_string(), "+FLAGS (\\Seen)")
+            .uid_store(&uid.to_string(), "+FLAGS (\\Seen)")
             .await
             .context("Failed to mark message as read")?;
 
@@ -429,7 +429,7 @@ impl ImapClient {
             .join(",");
 
         self.session
-            .copy(&uid_set, dest_folder)
+            .uid_copy(&uid_set, dest_folder)
             .await
             .context(format!("Failed to copy messages to folder: {}", dest_folder))?;
 
@@ -468,7 +468,7 @@ impl ImapClient {
 
         let mut store_stream = self
             .session
-            .store(&uid_set, "+FLAGS (\\Deleted)")
+            .uid_store(&uid_set, "+FLAGS (\\Deleted)")
             .await
             .context("Failed to mark messages as deleted")?;
 
@@ -512,7 +512,7 @@ impl ImapClient {
 
         let mut store_stream = self
             .session
-            .store(&uid_set, &flag_command)
+            .uid_store(&uid_set, &flag_command)
             .await
             .context(format!("Failed to modify flags: {}", flags))?;
 
