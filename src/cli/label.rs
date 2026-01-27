@@ -1,25 +1,32 @@
 use crate::core::imap::ImapClient;
 use crate::models::config::Config;
+use crate::models::folder::Folder;
 use crate::output::json;
 use anyhow::{anyhow, Result};
 use serde::Serialize;
 
 #[derive(Serialize)]
-struct FoldersOutput {
+struct LabelsOutput {
     account: String,
-    folders: Vec<crate::models::folder::Folder>,
+    labels: Vec<LabelInfo>,
 }
 
 #[derive(Serialize)]
-struct FolderActionOutput {
+struct LabelInfo {
+    name: String,
+    path: String,
+}
+
+#[derive(Serialize)]
+struct LabelActionOutput {
     success: bool,
     action: String,
-    folder: String,
+    label: String,
     message: String,
 }
 
 #[derive(Serialize)]
-struct FolderRenameOutput {
+struct LabelRenameOutput {
     success: bool,
     action: String,
     from: String,
@@ -27,7 +34,20 @@ struct FolderRenameOutput {
     message: String,
 }
 
-pub async fn list_folders(output_format: Option<&str>) -> Result<()> {
+/// Convert folder to label info if it's a label folder
+fn folder_to_label(folder: &Folder) -> Option<LabelInfo> {
+    if folder.path.starts_with("Labels/") {
+        let name = folder.path.strip_prefix("Labels/").unwrap_or(&folder.path);
+        Some(LabelInfo {
+            name: name.to_string(),
+            path: folder.path.clone(),
+        })
+    } else {
+        None
+    }
+}
+
+pub async fn list_labels(output_format: Option<&str>) -> Result<()> {
     let config = Config::load()?;
 
     let account = config
@@ -37,9 +57,15 @@ pub async fn list_folders(output_format: Option<&str>) -> Result<()> {
     let mut client = ImapClient::connect(account).await?;
     let folders = client.list_folders().await?;
 
-    let output = FoldersOutput {
+    // Filter to only labels (folders starting with "Labels/")
+    let labels: Vec<LabelInfo> = folders
+        .iter()
+        .filter_map(folder_to_label)
+        .collect();
+
+    let output = LabelsOutput {
         account: account.email.clone(),
-        folders,
+        labels,
     };
 
     match output_format.unwrap_or("json") {
@@ -52,30 +78,30 @@ pub async fn list_folders(output_format: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-pub async fn create_folder(name: &str, output_format: Option<&str>) -> Result<()> {
+pub async fn create_label(name: &str, output_format: Option<&str>) -> Result<()> {
     let config = Config::load()?;
 
     let account = config
         .get_default_account()
         .ok_or_else(|| anyhow!("No default account configured. Please add an account first."))?;
 
-    // Prepend "Folders/" prefix for ProtonMail custom folders
-    let folder_path = format!("Folders/{}", name);
+    // Prepend "Labels/" prefix for ProtonMail labels
+    let label_path = format!("Labels/{}", name);
 
     let mut client = ImapClient::connect(account).await?;
 
-    // Check if folder already exists
-    if client.folder_exists(&folder_path).await? {
-        return Err(anyhow!("Folder '{}' already exists", name));
+    // Check if label already exists
+    if client.folder_exists(&label_path).await? {
+        return Err(anyhow!("Label '{}' already exists", name));
     }
 
-    client.create_folder(&folder_path).await?;
+    client.create_folder(&label_path).await?;
 
-    let output = FolderActionOutput {
+    let output = LabelActionOutput {
         success: true,
         action: "create".to_string(),
-        folder: name.to_string(),
-        message: format!("Folder '{}' created successfully", name),
+        label: name.to_string(),
+        message: format!("Label '{}' created successfully", name),
     };
 
     match output_format.unwrap_or("json") {
@@ -88,30 +114,30 @@ pub async fn create_folder(name: &str, output_format: Option<&str>) -> Result<()
     Ok(())
 }
 
-pub async fn delete_folder(name: &str, output_format: Option<&str>) -> Result<()> {
+pub async fn delete_label(name: &str, output_format: Option<&str>) -> Result<()> {
     let config = Config::load()?;
 
     let account = config
         .get_default_account()
         .ok_or_else(|| anyhow!("No default account configured. Please add an account first."))?;
 
-    // Prepend "Folders/" prefix for ProtonMail custom folders
-    let folder_path = format!("Folders/{}", name);
+    // Prepend "Labels/" prefix for ProtonMail labels
+    let label_path = format!("Labels/{}", name);
 
     let mut client = ImapClient::connect(account).await?;
 
-    // Check if folder exists
-    if !client.folder_exists(&folder_path).await? {
-        return Err(anyhow!("Folder '{}' does not exist", name));
+    // Check if label exists
+    if !client.folder_exists(&label_path).await? {
+        return Err(anyhow!("Label '{}' does not exist", name));
     }
 
-    client.delete_folder(&folder_path).await?;
+    client.delete_folder(&label_path).await?;
 
-    let output = FolderActionOutput {
+    let output = LabelActionOutput {
         success: true,
         action: "delete".to_string(),
-        folder: name.to_string(),
-        message: format!("Folder '{}' deleted successfully", name),
+        label: name.to_string(),
+        message: format!("Label '{}' deleted successfully", name),
     };
 
     match output_format.unwrap_or("json") {
@@ -124,37 +150,37 @@ pub async fn delete_folder(name: &str, output_format: Option<&str>) -> Result<()
     Ok(())
 }
 
-pub async fn rename_folder(from: &str, to: &str, output_format: Option<&str>) -> Result<()> {
+pub async fn rename_label(from: &str, to: &str, output_format: Option<&str>) -> Result<()> {
     let config = Config::load()?;
 
     let account = config
         .get_default_account()
         .ok_or_else(|| anyhow!("No default account configured. Please add an account first."))?;
 
-    // Prepend "Folders/" prefix for ProtonMail custom folders
-    let from_path = format!("Folders/{}", from);
-    let to_path = format!("Folders/{}", to);
+    // Prepend "Labels/" prefix for ProtonMail labels
+    let from_path = format!("Labels/{}", from);
+    let to_path = format!("Labels/{}", to);
 
     let mut client = ImapClient::connect(account).await?;
 
-    // Check if source folder exists
+    // Check if source label exists
     if !client.folder_exists(&from_path).await? {
-        return Err(anyhow!("Folder '{}' does not exist", from));
+        return Err(anyhow!("Label '{}' does not exist", from));
     }
 
-    // Check if destination folder already exists
+    // Check if destination label already exists
     if client.folder_exists(&to_path).await? {
-        return Err(anyhow!("Folder '{}' already exists", to));
+        return Err(anyhow!("Label '{}' already exists", to));
     }
 
     client.rename_folder(&from_path, &to_path).await?;
 
-    let output = FolderRenameOutput {
+    let output = LabelRenameOutput {
         success: true,
         action: "rename".to_string(),
         from: from.to_string(),
         to: to.to_string(),
-        message: format!("Folder renamed from '{}' to '{}'", from, to),
+        message: format!("Label renamed from '{}' to '{}'", from, to),
     };
 
     match output_format.unwrap_or("json") {

@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(name = "protoncli")]
-#[command(version = "0.3.0")]
+#[command(version = "0.3.1")]
 #[command(about = "A production-ready CLI email client for ProtonMail Bridge", long_about = None)]
 struct Cli {
     #[command(subcommand)]
@@ -22,8 +22,16 @@ enum Commands {
         #[command(subcommand)]
         action: AccountAction,
     },
-    /// List folders
-    Folders,
+    /// Folder management commands
+    Folders {
+        #[command(subcommand)]
+        action: Option<FolderAction>,
+    },
+    /// Label management commands
+    Labels {
+        #[command(subcommand)]
+        action: Option<LabelAction>,
+    },
     /// Search messages with Gmail-style query
     Query {
         /// Query expression (Gmail-style syntax)
@@ -357,6 +365,78 @@ enum DraftAction {
     },
 }
 
+#[derive(Subcommand)]
+enum FolderAction {
+    /// List all folders
+    List {
+        /// Output format (json)
+        #[arg(long, short)]
+        output: Option<String>,
+    },
+    /// Create a new folder
+    Create {
+        /// Folder name (can include path like "Projects/Work")
+        name: String,
+        /// Output format (json)
+        #[arg(long, short)]
+        output: Option<String>,
+    },
+    /// Delete a folder (must be empty)
+    Delete {
+        /// Folder name
+        name: String,
+        /// Output format (json)
+        #[arg(long, short)]
+        output: Option<String>,
+    },
+    /// Rename a folder
+    Rename {
+        /// Current folder name
+        from: String,
+        /// New folder name
+        to: String,
+        /// Output format (json)
+        #[arg(long, short)]
+        output: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum LabelAction {
+    /// List all labels
+    List {
+        /// Output format (json)
+        #[arg(long, short)]
+        output: Option<String>,
+    },
+    /// Create a new label
+    Create {
+        /// Label name
+        name: String,
+        /// Output format (json)
+        #[arg(long, short)]
+        output: Option<String>,
+    },
+    /// Delete a label (must be empty)
+    Delete {
+        /// Label name
+        name: String,
+        /// Output format (json)
+        #[arg(long, short)]
+        output: Option<String>,
+    },
+    /// Rename a label
+    Rename {
+        /// Current label name
+        from: String,
+        /// New label name
+        to: String,
+        /// Output format (json)
+        #[arg(long, short)]
+        output: Option<String>,
+    },
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -369,7 +449,40 @@ async fn main() -> anyhow::Result<()> {
             AccountAction::Remove { email } => cli::account::remove_account(&email)?,
             AccountAction::Test { email } => cli::account::test_account(&email).await?,
         },
-        Commands::Folders => cli::folder::list_folders(None).await?,
+        Commands::Folders { action } => match action {
+            None | Some(FolderAction::List { output: None }) => {
+                cli::folder::list_folders(None).await?
+            }
+            Some(FolderAction::List { output }) => {
+                cli::folder::list_folders(output.as_deref()).await?
+            }
+            Some(FolderAction::Create { name, output }) => {
+                cli::folder::create_folder(&name, output.as_deref()).await?
+            }
+            Some(FolderAction::Delete { name, output }) => {
+                cli::folder::delete_folder(&name, output.as_deref()).await?
+            }
+            Some(FolderAction::Rename { from, to, output }) => {
+                cli::folder::rename_folder(&from, &to, output.as_deref()).await?
+            }
+        },
+        Commands::Labels { action } => match action {
+            None | Some(LabelAction::List { output: None }) => {
+                cli::label::list_labels(None).await?
+            }
+            Some(LabelAction::List { output }) => {
+                cli::label::list_labels(output.as_deref()).await?
+            }
+            Some(LabelAction::Create { name, output }) => {
+                cli::label::create_label(&name, output.as_deref()).await?
+            }
+            Some(LabelAction::Delete { name, output }) => {
+                cli::label::delete_label(&name, output.as_deref()).await?
+            }
+            Some(LabelAction::Rename { from, to, output }) => {
+                cli::label::rename_label(&from, &to, output.as_deref()).await?
+            }
+        },
         Commands::Query {
             query,
             folder,

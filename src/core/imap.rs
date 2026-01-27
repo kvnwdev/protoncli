@@ -561,4 +561,34 @@ impl ImapClient {
 
         Ok(false)
     }
+
+    /// Create a new folder/mailbox
+    pub async fn create_folder(&mut self, folder: &str) -> Result<()> {
+        self.session
+            .create(folder)
+            .await
+            .context(format!("Failed to create folder: {}", folder))?;
+
+        Ok(())
+    }
+
+    /// Delete a folder/mailbox (must be empty)
+    pub async fn delete_folder(&mut self, folder: &str) -> Result<()> {
+        self.session
+            .delete(folder)
+            .await
+            .context(format!("Failed to delete folder: {}", folder))?;
+
+        Ok(())
+    }
+
+    /// Rename a folder/mailbox
+    pub async fn rename_folder(&mut self, from: &str, to: &str) -> Result<()> {
+        self.session
+            .rename(from, to)
+            .await
+            .context(format!("Failed to rename folder from '{}' to '{}'", from, to))?;
+
+        Ok(())
+    }
 }
