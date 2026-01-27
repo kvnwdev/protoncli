@@ -11,6 +11,23 @@ cargo test               # Run all tests
 cargo run -- <command>   # Run CLI with arguments (e.g., cargo run -- inbox)
 ```
 
+## Testing
+
+### Run Tests
+
+```bash
+cargo test                    # Run all tests
+cargo test -- --nocapture     # Run with stdout visible
+cargo test models::query      # Run specific module tests
+cargo test cli::query         # Run CLI query tests
+```
+
+### Test Structure
+
+- **Unit tests**: Located in same files as code (`#[cfg(test)]` modules)
+- **Test coverage**: Query parsing, filter translation, folder resolution
+- **CI**: GitHub Actions runs tests on every push/PR
+
 ## Architecture
 
 ProtonCLI is a CLI email client for ProtonMail Bridge, built with async Rust using Tokio.

@@ -92,8 +92,8 @@ pub async fn execute_query(
     }
 
     // Check if query contains `in:folder` - that takes precedence
-    let effective_folder = MessageFilter::extract_folder_from_query(query_str)
-        .unwrap_or_else(|| folder.to_string());
+    let effective_folder =
+        MessageFilter::extract_folder_from_query(query_str).unwrap_or_else(|| folder.to_string());
 
     // Connect to IMAP and fetch messages
     let mut client = ImapClient::connect(account).await?;
@@ -111,7 +111,10 @@ pub async fn execute_query(
         .iter()
         .map(|msg| {
             let include = |field: QueryField| -> bool {
-                show_all_fields || requested_fields.as_ref().map_or(false, |f| f.contains(&field))
+                show_all_fields
+                    || requested_fields
+                        .as_ref()
+                        .is_some_and(|f| f.contains(&field))
             };
 
             QueryMessage {
@@ -138,11 +141,21 @@ pub async fn execute_query(
                 },
                 flags: if include(QueryField::Flags) {
                     let mut flags = Vec::new();
-                    if msg.flags.seen { flags.push("seen".to_string()); }
-                    if msg.flags.answered { flags.push("answered".to_string()); }
-                    if msg.flags.flagged { flags.push("flagged".to_string()); }
-                    if msg.flags.deleted { flags.push("deleted".to_string()); }
-                    if msg.flags.draft { flags.push("draft".to_string()); }
+                    if msg.flags.seen {
+                        flags.push("seen".to_string());
+                    }
+                    if msg.flags.answered {
+                        flags.push("answered".to_string());
+                    }
+                    if msg.flags.flagged {
+                        flags.push("flagged".to_string());
+                    }
+                    if msg.flags.deleted {
+                        flags.push("deleted".to_string());
+                    }
+                    if msg.flags.draft {
+                        flags.push("draft".to_string());
+                    }
                     Some(flags)
                 } else {
                     None
@@ -156,17 +169,16 @@ pub async fn execute_query(
     let state = StateManager::new().await?;
     let result_entries: Vec<(u32, Option<&str>, Option<&str>)> = messages
         .iter()
-        .map(|msg| {
-            (
-                msg.uid,
-                msg.message_id.as_deref(),
-                msg.subject.as_deref(),
-            )
-        })
+        .map(|msg| (msg.uid, msg.message_id.as_deref(), msg.subject.as_deref()))
         .collect();
 
     state
-        .save_query_results(&account.email, &effective_folder, query_str, &result_entries)
+        .save_query_results(
+            &account.email,
+            &effective_folder,
+            query_str,
+            &result_entries,
+        )
         .await?;
 
     // Optionally add to selection
@@ -273,4 +285,95 @@ fn print_markdown(output: &QueryOutput) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_query_field_from_str_basic() {
+        assert_eq!(QueryField::from_str("uid"), Some(QueryField::Uid));
+        assert_eq!(QueryField::from_str("subject"), Some(QueryField::Subject));
+        assert_eq!(QueryField::from_str("from"), Some(QueryField::From));
+        assert_eq!(QueryField::from_str("date"), Some(QueryField::Date));
+        assert_eq!(QueryField::from_str("flags"), Some(QueryField::Flags));
+    }
+
+    #[test]
+    fn test_query_field_from_str_message_id_variants() {
+        assert_eq!(
+            QueryField::from_str("message_id"),
+            Some(QueryField::MessageId)
+        );
+        assert_eq!(
+            QueryField::from_str("messageid"),
+            Some(QueryField::MessageId)
+        );
+        assert_eq!(QueryField::from_str("id"), Some(QueryField::MessageId));
+    }
+
+    #[test]
+    fn test_query_field_from_str_case_insensitive() {
+        assert_eq!(QueryField::from_str("UID"), Some(QueryField::Uid));
+        assert_eq!(QueryField::from_str("SUBJECT"), Some(QueryField::Subject));
+        assert_eq!(QueryField::from_str("FROM"), Some(QueryField::From));
+        assert_eq!(
+            QueryField::from_str("Message_Id"),
+            Some(QueryField::MessageId)
+        );
+    }
+
+    #[test]
+    fn test_query_field_from_str_invalid() {
+        assert_eq!(QueryField::from_str("invalid"), None);
+        assert_eq!(QueryField::from_str("body"), None);
+        assert_eq!(QueryField::from_str(""), None);
+        assert_eq!(QueryField::from_str("subject "), None);
+    }
+
+    #[test]
+    fn test_parse_fields_simple() {
+        let fields = parse_fields("uid,subject,from");
+        assert_eq!(fields.len(), 3);
+        assert!(fields.contains(&QueryField::Uid));
+        assert!(fields.contains(&QueryField::Subject));
+        assert!(fields.contains(&QueryField::From));
+    }
+
+    #[test]
+    fn test_parse_fields_with_spaces() {
+        let fields = parse_fields("uid, subject , from");
+        assert_eq!(fields.len(), 3);
+        assert!(fields.contains(&QueryField::Uid));
+        assert!(fields.contains(&QueryField::Subject));
+        assert!(fields.contains(&QueryField::From));
+    }
+
+    #[test]
+    fn test_parse_fields_ignores_invalid() {
+        let fields = parse_fields("uid,invalid,subject,body");
+        assert_eq!(fields.len(), 2);
+        assert!(fields.contains(&QueryField::Uid));
+        assert!(fields.contains(&QueryField::Subject));
+    }
+
+    #[test]
+    fn test_parse_fields_empty_string() {
+        let fields = parse_fields("");
+        assert!(fields.is_empty());
+    }
+
+    #[test]
+    fn test_parse_fields_all_invalid() {
+        let fields = parse_fields("invalid,body,foo");
+        assert!(fields.is_empty());
+    }
+
+    #[test]
+    fn test_parse_fields_single_field() {
+        let fields = parse_fields("uid");
+        assert_eq!(fields.len(), 1);
+        assert!(fields.contains(&QueryField::Uid));
+    }
 }

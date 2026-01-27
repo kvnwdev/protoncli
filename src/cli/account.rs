@@ -46,8 +46,7 @@ pub async fn add_account(email: &str) -> Result<()> {
     println!("Enter password for {}: ", email);
     use std::io::{self, Write};
     io::stdout().flush()?;
-    let password = rpassword::read_password()
-        .context("Failed to read password")?;
+    let password = rpassword::read_password().context("Failed to read password")?;
 
     if password.is_empty() {
         return Err(anyhow!("Password cannot be empty"));
@@ -64,8 +63,8 @@ pub async fn add_account(email: &str) -> Result<()> {
     config.save()?;
 
     println!("✓ Account {} added successfully", email);
-    println!("  IMAP: {}:{}", "127.0.0.1", 1143);
-    println!("  SMTP: {}:{}", "127.0.0.1", 1025);
+    println!("  IMAP: 127.0.0.1:{}", 1143);
+    println!("  SMTP: 127.0.0.1:{}", 1025);
     println!();
     println!("Test connection with: protoncli account test {}", email);
 
@@ -92,12 +91,14 @@ pub fn list_accounts() -> Result<()> {
         };
 
         println!("  {} {}", account.email, default_marker);
-        println!("    IMAP: {}:{} ({})",
+        println!(
+            "    IMAP: {}:{} ({})",
             account.imap_host,
             account.imap_port,
             format!("{:?}", account.imap_security).to_lowercase()
         );
-        println!("    SMTP: {}:{} ({})",
+        println!(
+            "    SMTP: {}:{} ({})",
             account.smtp_host,
             account.smtp_port,
             format!("{:?}", account.smtp_security).to_lowercase()
@@ -132,7 +133,10 @@ pub fn remove_account(email: &str) -> Result<()> {
     }
 
     // Confirm deletion
-    println!("Remove account {}? This will delete the account configuration and password from keychain.", email);
+    println!(
+        "Remove account {}? This will delete the account configuration and password from keychain.",
+        email
+    );
     println!("Type 'yes' to confirm: ");
 
     use std::io::{self, BufRead};

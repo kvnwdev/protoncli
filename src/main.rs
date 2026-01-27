@@ -504,18 +504,20 @@ async fn main() -> anyhow::Result<()> {
             .await?
         }
         Commands::Select { action } => match action {
-            SelectAction::Add { uids, folder, output } => {
-                cli::select::add_to_selection(uids, &folder, output.as_deref()).await?
-            }
+            SelectAction::Add {
+                uids,
+                folder,
+                output,
+            } => cli::select::add_to_selection(uids, &folder, output.as_deref()).await?,
             SelectAction::Last { folder, output } => {
                 cli::select::add_last_query_to_selection(&folder, output.as_deref()).await?
             }
-            SelectAction::Remove { uids, folder, output } => {
-                cli::select::remove_from_selection(uids, &folder, output.as_deref()).await?
-            }
-            SelectAction::Show { output } => {
-                cli::select::show_selection(output.as_deref()).await?
-            }
+            SelectAction::Remove {
+                uids,
+                folder,
+                output,
+            } => cli::select::remove_from_selection(uids, &folder, output.as_deref()).await?,
+            SelectAction::Show { output } => cli::select::show_selection(output.as_deref()).await?,
             SelectAction::Clear { output } => {
                 cli::select::clear_selection(output.as_deref()).await?
             }
@@ -524,12 +526,8 @@ async fn main() -> anyhow::Result<()> {
             }
         },
         Commands::Draft { action } => match action {
-            DraftAction::Show { output } => {
-                cli::draft::show_draft(output.as_deref()).await?
-            }
-            DraftAction::Clear { output } => {
-                cli::draft::clear_draft(output.as_deref()).await?
-            }
+            DraftAction::Show { output } => cli::draft::show_draft(output.as_deref()).await?,
+            DraftAction::Clear { output } => cli::draft::clear_draft(output.as_deref()).await?,
         },
         Commands::Inbox {
             days,
@@ -540,8 +538,16 @@ async fn main() -> anyhow::Result<()> {
             query,
             preview,
         } => {
-            cli::message::list_inbox(days, unread_only, agent_unread, limit, output.as_deref(), query, preview)
-                .await?
+            cli::message::list_inbox(
+                days,
+                unread_only,
+                agent_unread,
+                limit,
+                output.as_deref(),
+                query,
+                preview,
+            )
+            .await?
         }
         Commands::Read {
             uid,
@@ -562,9 +568,7 @@ async fn main() -> anyhow::Result<()> {
             body,
             body_file,
             attach,
-        } => {
-            cli::send::send_email(from, to, cc, bcc, subject, body, body_file, attach).await?
-        }
+        } => cli::send::send_email(from, to, cc, bcc, subject, body, body_file, attach).await?,
         Commands::QueryHelp => show_query_help(),
         Commands::Move {
             uids,
@@ -574,7 +578,10 @@ async fn main() -> anyhow::Result<()> {
             draft,
             keep,
             output,
-        } => cli::actions::move_messages(uids, &from, &to, selection, draft, keep, output.as_deref()).await?,
+        } => {
+            cli::actions::move_messages(uids, &from, &to, selection, draft, keep, output.as_deref())
+                .await?
+        }
         Commands::Copy {
             uids,
             from,
@@ -583,7 +590,10 @@ async fn main() -> anyhow::Result<()> {
             draft,
             keep,
             output,
-        } => cli::actions::copy_messages(uids, &from, &to, selection, draft, keep, output.as_deref()).await?,
+        } => {
+            cli::actions::copy_messages(uids, &from, &to, selection, draft, keep, output.as_deref())
+                .await?
+        }
         Commands::Delete {
             uids,
             from,
@@ -593,9 +603,29 @@ async fn main() -> anyhow::Result<()> {
             draft,
             keep,
             output,
-        } => cli::actions::delete_messages(uids, &from, permanent, yes, selection, draft, keep, output.as_deref()).await?,
-        Commands::Archive { uids, from, selection, draft, keep, output } => {
-            cli::actions::archive_messages(uids, &from, selection, draft, keep, output.as_deref()).await?
+        } => {
+            cli::actions::delete_messages(
+                uids,
+                &from,
+                permanent,
+                yes,
+                selection,
+                draft,
+                keep,
+                output.as_deref(),
+            )
+            .await?
+        }
+        Commands::Archive {
+            uids,
+            from,
+            selection,
+            draft,
+            keep,
+            output,
+        } => {
+            cli::actions::archive_messages(uids, &from, selection, draft, keep, output.as_deref())
+                .await?
         }
         Commands::Flag {
             uids,
@@ -637,83 +667,82 @@ async fn main() -> anyhow::Result<()> {
 fn show_query_help() {
     // Load help text from asset file at compile time
     const HELP_TEXT: &str = include_str!("assets/query_help.txt");
-    
+
     // ANSI color codes
     const BOLD: &str = "\x1b[1m";
     const CYAN: &str = "\x1b[36m";
     const YELLOW: &str = "\x1b[33m";
     const RESET: &str = "\x1b[0m";
-    
+
     // Process each line and apply formatting
     for line in HELP_TEXT.lines() {
-        let formatted = if line.starts_with("# ") {
+        let formatted = if let Some(stripped) = line.strip_prefix("# ") {
             // Main title: bold
-            format!("{}{}{}", BOLD, &line[2..], RESET)
-        } else if line.starts_with("## ") {
+            format!("{}{}{}", BOLD, stripped, RESET)
+        } else if let Some(stripped) = line.strip_prefix("## ") {
             // Section headers: bold
-            format!("\n{}{}{}", BOLD, &line[3..], RESET)
+            format!("\n{}{}{}", BOLD, stripped, RESET)
         } else {
             // Process inline markup
             let mut result = line.to_string();
-            
+
             // Process `text` -> cyan (field names, flags)
             while let Some(start) = result.find('`') {
-                if let Some(end) = result[start+1..].find('`') {
+                if let Some(end) = result[start + 1..].find('`') {
                     let end = start + 1 + end;
-                    let inner = &result[start+1..end];
+                    let inner = &result[start + 1..end];
                     result = format!(
                         "{}{}{}{}{}",
                         &result[..start],
                         CYAN,
                         inner,
                         RESET,
-                        &result[end+1..]
+                        &result[end + 1..]
                     );
                 } else {
                     break;
                 }
             }
-            
+
             // Process **text** -> bold
             while let Some(start) = result.find("**") {
-                if let Some(end) = result[start+2..].find("**") {
+                if let Some(end) = result[start + 2..].find("**") {
                     let end = start + 2 + end;
-                    let inner = &result[start+2..end];
+                    let inner = &result[start + 2..end];
                     result = format!(
                         "{}{}{}{}{}",
                         &result[..start],
                         BOLD,
                         inner,
                         RESET,
-                        &result[end+2..]
+                        &result[end + 2..]
                     );
                 } else {
                     break;
                 }
             }
-            
+
             // Process ~text~ -> yellow (operators like AND, OR, NOT)
             while let Some(start) = result.find('~') {
-                if let Some(end) = result[start+1..].find('~') {
+                if let Some(end) = result[start + 1..].find('~') {
                     let end = start + 1 + end;
-                    let inner = &result[start+1..end];
+                    let inner = &result[start + 1..end];
                     result = format!(
                         "{}{}{}{}{}",
                         &result[..start],
                         YELLOW,
                         inner,
                         RESET,
-                        &result[end+1..]
+                        &result[end + 1..]
                     );
                 } else {
                     break;
                 }
             }
-            
+
             result
         };
-        
+
         println!("{}", formatted);
     }
 }
-

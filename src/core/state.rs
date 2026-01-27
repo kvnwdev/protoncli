@@ -19,6 +19,7 @@ pub struct SelectionEntry {
 
 /// A query history result entry
 #[derive(Debug, Clone, FromRow)]
+#[allow(dead_code)] // Fields used via FromRow derive for database queries
 pub struct QueryResultEntry {
     pub account: String,
     pub folder: String,
@@ -145,8 +146,7 @@ impl StateManager {
             .context("Failed to get local data directory")?
             .join("protoncli");
 
-        std::fs::create_dir_all(&data_dir)
-            .context("Failed to create data directory")?;
+        std::fs::create_dir_all(&data_dir).context("Failed to create data directory")?;
 
         // Set restrictive permissions on the data directory (0700 on Unix)
         #[cfg(unix)]
@@ -211,12 +211,11 @@ impl StateManager {
     /// Check if the database has the old schema (folder/uid unique) that needs migration
     async fn check_needs_schema_migration(pool: &SqlitePool) -> Result<bool> {
         // Check if messages table exists
-        let table_exists: Option<(String,)> = sqlx::query_as(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='messages'"
-        )
-        .fetch_optional(pool)
-        .await
-        .context("Failed to check for messages table")?;
+        let table_exists: Option<(String,)> =
+            sqlx::query_as("SELECT name FROM sqlite_master WHERE type='table' AND name='messages'")
+                .fetch_optional(pool)
+                .await
+                .context("Failed to check for messages table")?;
 
         if table_exists.is_none() {
             return Ok(false); // Fresh install, no migration needed
@@ -224,7 +223,7 @@ impl StateManager {
 
         // Check if schema_migrations table exists (new schema indicator)
         let migrations_exists: Option<(String,)> = sqlx::query_as(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'",
         )
         .fetch_optional(pool)
         .await
@@ -236,6 +235,7 @@ impl StateManager {
 
     /// Upsert a message using message_id as the stable identifier.
     /// folder/uid represent the current location and are updated on conflict.
+    #[allow(clippy::too_many_arguments)]
     pub async fn upsert_message(
         &self,
         account: &str,
@@ -313,50 +313,6 @@ impl StateManager {
         .context("Failed to check agent-read status")?;
 
         Ok(result.map(|(read,)| read).unwrap_or(false))
-    }
-
-    /// Update the location (folder/uid) of a message after it's been moved
-    pub async fn update_message_location(
-        &self,
-        account: &str,
-        message_id: &str,
-        new_folder: &str,
-        new_uid: Option<u32>,
-    ) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE messages
-            SET folder = ?3, uid = ?4
-            WHERE account = ?1 AND message_id = ?2
-            "#,
-        )
-        .bind(account)
-        .bind(message_id)
-        .bind(new_folder)
-        .bind(new_uid)
-        .execute(&self.pool)
-        .await
-        .context("Failed to update message location")?;
-
-        Ok(())
-    }
-
-    /// Clear the location when a message is deleted (but keep the record for agent_read history)
-    pub async fn clear_message_location(&self, account: &str, message_id: &str) -> Result<()> {
-        sqlx::query(
-            r#"
-            UPDATE messages
-            SET folder = NULL, uid = NULL
-            WHERE account = ?1 AND message_id = ?2
-            "#,
-        )
-        .bind(account)
-        .bind(message_id)
-        .execute(&self.pool)
-        .await
-        .context("Failed to clear message location")?;
-
-        Ok(())
     }
 
     // ============================================================
@@ -481,13 +437,12 @@ impl StateManager {
 
     /// Clear selection for a specific folder
     pub async fn clear_selection_for_folder(&self, account: &str, folder: &str) -> Result<usize> {
-        let result =
-            sqlx::query("DELETE FROM selections WHERE account = ?1 AND folder = ?2")
-                .bind(account)
-                .bind(folder)
-                .execute(&self.pool)
-                .await
-                .context("Failed to clear selection for folder")?;
+        let result = sqlx::query("DELETE FROM selections WHERE account = ?1 AND folder = ?2")
+            .bind(account)
+            .bind(folder)
+            .execute(&self.pool)
+            .await
+            .context("Failed to clear selection for folder")?;
 
         Ok(result.rows_affected() as usize)
     }
@@ -584,28 +539,6 @@ impl StateManager {
         Ok(entries)
     }
 
-    /// Get the last query string for an account/folder
-    pub async fn get_last_query_string(
-        &self,
-        account: &str,
-        folder: &str,
-    ) -> Result<Option<String>> {
-        let result: Option<(String,)> = sqlx::query_as(
-            r#"
-            SELECT query_string
-            FROM query_history
-            WHERE account = ?1 AND folder = ?2
-            "#,
-        )
-        .bind(account)
-        .bind(folder)
-        .fetch_optional(&self.pool)
-        .await
-        .context("Failed to get last query string")?;
-
-        Ok(result.map(|(s,)| s))
-    }
-
     // ============================================================
     // Draft methods
     // ============================================================
@@ -616,7 +549,7 @@ impl StateManager {
         let flag_params_json = draft
             .flag_params
             .as_ref()
-            .map(|p| serde_json::to_string(p))
+            .map(serde_json::to_string)
             .transpose()?;
 
         sqlx::query(
@@ -648,24 +581,41 @@ impl StateManager {
     }
 
     /// Get the current draft for an account
+    #[allow(clippy::type_complexity)]
     pub async fn get_draft(&self, account: &str) -> Result<Option<Draft>> {
-        let row: Option<(String, String, String, String, Option<String>, Option<String>, bool)> =
-            sqlx::query_as(
-                r#"
+        let row: Option<(
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            bool,
+        )> = sqlx::query_as(
+            r#"
             SELECT account, action_type, folder, uids_json, flag_params_json, dest_folder, permanent
             FROM drafts
             WHERE account = ?1
             "#,
-            )
-            .bind(account)
-            .fetch_optional(&self.pool)
-            .await
-            .context("Failed to get draft")?;
+        )
+        .bind(account)
+        .fetch_optional(&self.pool)
+        .await
+        .context("Failed to get draft")?;
 
         match row {
-            Some((account, action_type, folder, uids_json, flag_params_json, dest_folder, permanent)) => {
-                let action_type = ActionType::from_str(&action_type)
-                    .ok_or_else(|| anyhow::anyhow!("Invalid action type in draft: {}", action_type))?;
+            Some((
+                account,
+                action_type,
+                folder,
+                uids_json,
+                flag_params_json,
+                dest_folder,
+                permanent,
+            )) => {
+                let action_type = ActionType::from_str(&action_type).ok_or_else(|| {
+                    anyhow::anyhow!("Invalid action type in draft: {}", action_type)
+                })?;
                 let uids: Vec<u32> = serde_json::from_str(&uids_json)?;
                 let flag_params: Option<FlagParams> = flag_params_json
                     .map(|s| serde_json::from_str(&s))
@@ -694,16 +644,5 @@ impl StateManager {
             .context("Failed to clear draft")?;
 
         Ok(result.rows_affected() > 0)
-    }
-
-    /// Check if a draft exists for an account
-    pub async fn has_draft(&self, account: &str) -> Result<bool> {
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM drafts WHERE account = ?1")
-            .bind(account)
-            .fetch_one(&self.pool)
-            .await
-            .context("Failed to check for draft")?;
-
-        Ok(count.0 > 0)
     }
 }

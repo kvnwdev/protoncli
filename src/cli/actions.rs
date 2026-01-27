@@ -47,7 +47,9 @@ async fn resolve_uids(
 ) -> Result<(Vec<u32>, String)> {
     if use_selection {
         // Get UIDs from selection for the specified folder
-        let selection = state.get_selection_for_folder(account_email, from_folder).await?;
+        let selection = state
+            .get_selection_for_folder(account_email, from_folder)
+            .await?;
         if selection.is_empty() {
             return Err(anyhow!(
                 "Selection is empty for folder '{}'. Use 'protoncli select add' or 'protoncli query --select' first.",
@@ -75,7 +77,9 @@ async fn post_action_cleanup(
     if keep_selection {
         Ok(false)
     } else {
-        let cleared = state.clear_selection_for_folder(account_email, folder).await?;
+        let cleared = state
+            .clear_selection_for_folder(account_email, folder)
+            .await?;
         Ok(cleared > 0)
     }
 }
@@ -100,7 +104,8 @@ pub async fn move_messages(
     let dest_folder = resolve_folder_path(to);
 
     // Resolve UIDs from selection or provided list
-    let (resolved_uids, folder) = resolve_uids(uids, use_selection, &source_folder, &account.email, &state).await?;
+    let (resolved_uids, folder) =
+        resolve_uids(uids, use_selection, &source_folder, &account.email, &state).await?;
 
     // If draft mode, save draft and return
     if create_draft {
@@ -141,12 +146,15 @@ pub async fn move_messages(
 
     // Validate destination folder exists
     if !client.folder_exists(&dest_folder).await? {
-        return Err(anyhow!("Destination folder '{}' does not exist", dest_folder));
+        return Err(anyhow!(
+            "Destination folder '{}' does not exist",
+            dest_folder
+        ));
     }
 
     // Select source folder and move messages in batches
     client.select_folder(&folder).await?;
-    
+
     for chunk in chunk_uids(&resolved_uids, DEFAULT_BATCH_SIZE) {
         client.move_messages(&chunk, &dest_folder).await?;
     }
@@ -203,7 +211,8 @@ pub async fn copy_messages(
     let dest_folder = resolve_folder_path(to);
 
     // Resolve UIDs from selection or provided list
-    let (resolved_uids, folder) = resolve_uids(uids, use_selection, &source_folder, &account.email, &state).await?;
+    let (resolved_uids, folder) =
+        resolve_uids(uids, use_selection, &source_folder, &account.email, &state).await?;
 
     // If draft mode, save draft and return
     if create_draft {
@@ -244,12 +253,15 @@ pub async fn copy_messages(
 
     // Validate destination folder exists
     if !client.folder_exists(&dest_folder).await? {
-        return Err(anyhow!("Destination folder '{}' does not exist", dest_folder));
+        return Err(anyhow!(
+            "Destination folder '{}' does not exist",
+            dest_folder
+        ));
     }
 
     // Select source folder and copy messages in batches
     client.select_folder(&folder).await?;
-    
+
     for chunk in chunk_uids(&resolved_uids, DEFAULT_BATCH_SIZE) {
         client.copy_messages(&chunk, &dest_folder).await?;
     }
@@ -287,6 +299,7 @@ pub async fn copy_messages(
 }
 
 /// Delete messages (move to Trash or permanent delete)
+#[allow(clippy::too_many_arguments)]
 pub async fn delete_messages(
     uids: Vec<u32>,
     from: &str,
@@ -306,7 +319,8 @@ pub async fn delete_messages(
     let source_folder = resolve_folder_path(from);
 
     // Resolve UIDs from selection or provided list
-    let (resolved_uids, folder) = resolve_uids(uids, use_selection, &source_folder, &account.email, &state).await?;
+    let (resolved_uids, folder) =
+        resolve_uids(uids, use_selection, &source_folder, &account.email, &state).await?;
 
     // If draft mode, save draft and return
     if create_draft {
@@ -321,12 +335,20 @@ pub async fn delete_messages(
         };
         state.save_draft(&draft).await?;
 
-        let action_desc = if permanent { "Permanently delete" } else { "Move to Trash" };
+        let action_desc = if permanent {
+            "Permanently delete"
+        } else {
+            "Move to Trash"
+        };
         let output = ActionOutput {
             action: "delete".to_string(),
             account: account.email.clone(),
             source_folder: folder,
-            dest_folder: if permanent { None } else { Some("Trash".to_string()) },
+            dest_folder: if permanent {
+                None
+            } else {
+                Some("Trash".to_string())
+            },
             uids: resolved_uids.clone(),
             success_count: 0,
             failed_uids: vec![],
@@ -338,7 +360,8 @@ pub async fn delete_messages(
             "json" => json::print_json(&output)?,
             _ => println!(
                 "Draft staged: {} {} message(s). Run 'protoncli delete' to execute.",
-                action_desc, resolved_uids.len()
+                action_desc,
+                resolved_uids.len()
             ),
         }
         return Ok(());
@@ -437,7 +460,8 @@ pub async fn archive_messages(
     let dest_folder = "Archive".to_string();
 
     // Resolve UIDs from selection or provided list
-    let (resolved_uids, folder) = resolve_uids(uids, use_selection, &source_folder, &account.email, &state).await?;
+    let (resolved_uids, folder) =
+        resolve_uids(uids, use_selection, &source_folder, &account.email, &state).await?;
 
     // If draft mode, save draft and return
     if create_draft {
@@ -483,7 +507,7 @@ pub async fn archive_messages(
 
     // Select source folder and move messages in batches
     client.select_folder(&folder).await?;
-    
+
     for chunk in chunk_uids(&resolved_uids, DEFAULT_BATCH_SIZE) {
         client.move_messages(&chunk, &dest_folder).await?;
     }
@@ -520,6 +544,7 @@ pub async fn archive_messages(
 }
 
 /// Modify message flags (read/unread, starred, labels) and optionally move
+#[allow(clippy::too_many_arguments)]
 pub async fn modify_flags(
     uids: Vec<u32>,
     from: &str,
@@ -553,8 +578,20 @@ pub async fn modify_flags(
 
     // Build flag params from provided flags
     let flag_params = FlagParams {
-        read: if read { Some(true) } else if unread { Some(false) } else { None },
-        starred: if starred { Some(true) } else if unstarred { Some(false) } else { None },
+        read: if read {
+            Some(true)
+        } else if unread {
+            Some(false)
+        } else {
+            None
+        },
+        starred: if starred {
+            Some(true)
+        } else if unstarred {
+            Some(false)
+        } else {
+            None
+        },
         labels: labels.clone(),
         unlabels: unlabels.clone(),
         move_to: move_to.clone(),
@@ -567,7 +604,7 @@ pub async fn modify_flags(
         if draft.action_type == ActionType::Flag {
             let mut merged_params = draft.flag_params.clone().unwrap_or_default();
             merged_params.merge(&flag_params);
-            
+
             // If no new flags are provided and not using selection, execute the draft
             if !use_selection && uids.is_empty() && !flag_params.has_any_action() {
                 // Execute draft as-is
@@ -575,7 +612,9 @@ pub async fn modify_flags(
                 (draft.uids.clone(), draft.folder.clone(), merged_params)
             } else if use_selection || !uids.is_empty() {
                 // New UIDs provided - resolve them normally but use merged params
-                let (resolved, folder) = resolve_uids(uids, use_selection, &source_folder, &account.email, &state).await?;
+                let (resolved, folder) =
+                    resolve_uids(uids, use_selection, &source_folder, &account.email, &state)
+                        .await?;
                 (resolved, folder, merged_params)
             } else {
                 // Execute draft with merged params
@@ -584,12 +623,14 @@ pub async fn modify_flags(
             }
         } else {
             // Draft is for different action type, resolve UIDs normally
-            let (resolved, folder) = resolve_uids(uids, use_selection, &source_folder, &account.email, &state).await?;
+            let (resolved, folder) =
+                resolve_uids(uids, use_selection, &source_folder, &account.email, &state).await?;
             (resolved, folder, flag_params)
         }
     } else {
         // No existing draft - must have UIDs or selection
-        let (resolved, folder) = resolve_uids(uids, use_selection, &source_folder, &account.email, &state).await?;
+        let (resolved, folder) =
+            resolve_uids(uids, use_selection, &source_folder, &account.email, &state).await?;
         (resolved, folder, flag_params)
     };
 
@@ -608,25 +649,45 @@ pub async fn modify_flags(
             folder: folder.clone(),
             uids: resolved_uids.clone(),
             flag_params: Some(final_flag_params.clone()),
-            dest_folder: final_flag_params.move_to.clone().map(|d| resolve_folder_path(&d)),
+            dest_folder: final_flag_params
+                .move_to
+                .clone()
+                .map(|d| resolve_folder_path(&d)),
             permanent: false,
         };
         state.save_draft(&draft).await?;
 
         let mut actions = Vec::new();
-        if final_flag_params.read == Some(true) { actions.push("mark as read"); }
-        if final_flag_params.read == Some(false) { actions.push("mark as unread"); }
-        if final_flag_params.starred == Some(true) { actions.push("star"); }
-        if final_flag_params.starred == Some(false) { actions.push("unstar"); }
-        if !final_flag_params.labels.is_empty() { actions.push("add labels"); }
-        if !final_flag_params.unlabels.is_empty() { actions.push("remove labels"); }
-        if final_flag_params.move_to.is_some() { actions.push("move"); }
+        if final_flag_params.read == Some(true) {
+            actions.push("mark as read");
+        }
+        if final_flag_params.read == Some(false) {
+            actions.push("mark as unread");
+        }
+        if final_flag_params.starred == Some(true) {
+            actions.push("star");
+        }
+        if final_flag_params.starred == Some(false) {
+            actions.push("unstar");
+        }
+        if !final_flag_params.labels.is_empty() {
+            actions.push("add labels");
+        }
+        if !final_flag_params.unlabels.is_empty() {
+            actions.push("remove labels");
+        }
+        if final_flag_params.move_to.is_some() {
+            actions.push("move");
+        }
 
         let output = ActionOutput {
             action: "flag".to_string(),
             account: account.email.clone(),
             source_folder: folder,
-            dest_folder: final_flag_params.move_to.clone().map(|d| resolve_folder_path(&d)),
+            dest_folder: final_flag_params
+                .move_to
+                .clone()
+                .map(|d| resolve_folder_path(&d)),
             uids: resolved_uids.clone(),
             success_count: 0,
             failed_uids: vec![],
@@ -638,7 +699,8 @@ pub async fn modify_flags(
             "json" => json::print_json(&output)?,
             _ => println!(
                 "Draft staged: {} on {} message(s). Run 'protoncli flag' to execute.",
-                actions.join(", "), resolved_uids.len()
+                actions.join(", "),
+                resolved_uids.len()
             ),
         }
         return Ok(());
@@ -697,7 +759,10 @@ pub async fn modify_flags(
     let dest_folder = if let Some(ref dest) = final_flag_params.move_to {
         let dest_resolved = resolve_folder_path(dest);
         if !client.folder_exists(&dest_resolved).await? {
-            return Err(anyhow!("Destination folder '{}' does not exist", dest_resolved));
+            return Err(anyhow!(
+                "Destination folder '{}' does not exist",
+                dest_resolved
+            ));
         }
         for chunk in chunk_uids(&resolved_uids, DEFAULT_BATCH_SIZE) {
             client.move_messages(&chunk, &dest_resolved).await?;
@@ -740,4 +805,59 @@ pub async fn modify_flags(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_folder_path_inbox() {
+        assert_eq!(resolve_folder_path("inbox"), "INBOX");
+        assert_eq!(resolve_folder_path("INBOX"), "INBOX");
+        assert_eq!(resolve_folder_path("InBox"), "INBOX");
+    }
+
+    #[test]
+    fn test_resolve_folder_path_common_aliases() {
+        assert_eq!(resolve_folder_path("archive"), "Archive");
+        assert_eq!(resolve_folder_path("ARCHIVE"), "Archive");
+        assert_eq!(resolve_folder_path("trash"), "Trash");
+        assert_eq!(resolve_folder_path("TRASH"), "Trash");
+        assert_eq!(resolve_folder_path("sent"), "Sent");
+        assert_eq!(resolve_folder_path("SENT"), "Sent");
+        assert_eq!(resolve_folder_path("drafts"), "Drafts");
+        assert_eq!(resolve_folder_path("DRAFTS"), "Drafts");
+    }
+
+    #[test]
+    fn test_resolve_folder_path_spam_aliases() {
+        assert_eq!(resolve_folder_path("spam"), "Spam");
+        assert_eq!(resolve_folder_path("SPAM"), "Spam");
+        assert_eq!(resolve_folder_path("junk"), "Spam");
+        assert_eq!(resolve_folder_path("JUNK"), "Spam");
+    }
+
+    #[test]
+    fn test_resolve_folder_path_all_mail() {
+        assert_eq!(resolve_folder_path("all"), "All Mail");
+        assert_eq!(resolve_folder_path("all mail"), "All Mail");
+    }
+
+    #[test]
+    fn test_resolve_folder_path_passthrough() {
+        // Custom folders should pass through unchanged
+        assert_eq!(resolve_folder_path("Custom/Folder"), "Custom/Folder");
+        assert_eq!(resolve_folder_path("Folders/Crypto"), "Folders/Crypto");
+        assert_eq!(resolve_folder_path("Labels/Important"), "Labels/Important");
+        assert_eq!(resolve_folder_path("SomeOtherFolder"), "SomeOtherFolder");
+    }
+
+    #[test]
+    fn test_resolve_folder_path_preserves_case_on_passthrough() {
+        // Unknown folders should preserve their original case
+        assert_eq!(resolve_folder_path("MyFolder"), "MyFolder");
+        assert_eq!(resolve_folder_path("myfolder"), "myfolder");
+        assert_eq!(resolve_folder_path("MYFOLDER"), "MYFOLDER");
+    }
 }

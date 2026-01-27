@@ -45,8 +45,7 @@ impl ImapClient {
                 let tcp_stream = client.into_inner();
 
                 // Step 6: Upgrade to TLS (accept self-signed cert for Bridge)
-                let tls_connector = TlsConnector::new()
-                    .danger_accept_invalid_certs(true);
+                let tls_connector = TlsConnector::new().danger_accept_invalid_certs(true);
 
                 let tls_stream = tls_connector
                     .connect(&account.imap_host, tcp_stream)
@@ -64,8 +63,7 @@ impl ImapClient {
 
                 let tcp_stream = tcp_stream.compat();
 
-                let tls_connector = TlsConnector::new()
-                    .danger_accept_invalid_certs(true);
+                let tls_connector = TlsConnector::new().danger_accept_invalid_certs(true);
 
                 let tls_stream = tls_connector
                     .connect(&account.imap_host, tcp_stream)
@@ -92,7 +90,10 @@ impl ImapClient {
         let mut client = Self::connect(account).await?;
 
         // Try to list folders to verify full functionality
-        let _mailboxes = client.session.list(None, Some("*")).await
+        let _mailboxes = client
+            .session
+            .list(None, Some("*"))
+            .await
             .context("Failed to list mailboxes")?;
 
         Ok(format!(
@@ -102,7 +103,10 @@ impl ImapClient {
     }
 
     pub async fn list_folders(&mut self) -> Result<Vec<Folder>> {
-        let mut mailboxes_stream = self.session.list(None, Some("*")).await
+        let mut mailboxes_stream = self
+            .session
+            .list(None, Some("*"))
+            .await
             .context("Failed to list mailboxes")?;
 
         let mut folders = Vec::new();
@@ -133,7 +137,8 @@ impl ImapClient {
     pub async fn fetch_messages(&mut self, filter: &MessageFilter) -> Result<Vec<Message>> {
         // Build and execute search query
         let search_query = filter.build_imap_search_query()?;
-        let uids_set = self.session
+        let uids_set = self
+            .session
             .search(&search_query)
             .await
             .context("Failed to search messages")?;
@@ -165,7 +170,8 @@ impl ImapClient {
             "(UID FLAGS ENVELOPE BODY.PEEK[HEADER])"
         };
 
-        let mut messages_stream = self.session
+        let mut messages_stream = self
+            .session
             .uid_fetch(&uid_set, fetch_query)
             .await
             .context("Failed to fetch messages")?;
@@ -192,14 +198,30 @@ impl ImapClient {
 
                 // Parse envelope
                 if let Some(envelope) = fetch.envelope() {
-                    message.subject = envelope.subject.as_ref().map(|s| String::from_utf8_lossy(s).to_string());
-                    message.message_id = envelope.message_id.as_ref().map(|s| String::from_utf8_lossy(s).to_string());
+                    message.subject = envelope
+                        .subject
+                        .as_ref()
+                        .map(|s| String::from_utf8_lossy(s).to_string());
+                    message.message_id = envelope
+                        .message_id
+                        .as_ref()
+                        .map(|s| String::from_utf8_lossy(s).to_string());
 
                     // Parse from address
                     if let Some(from) = envelope.from.as_ref().and_then(|f| f.first()) {
-                        let address = from.mailbox.as_ref()
-                            .and_then(|m| from.host.as_ref().map(|h| format!("{}@{}", String::from_utf8_lossy(m), String::from_utf8_lossy(h))));
-                        let name = from.name.as_ref().map(|n| String::from_utf8_lossy(n).to_string());
+                        let address = from.mailbox.as_ref().and_then(|m| {
+                            from.host.as_ref().map(|h| {
+                                format!(
+                                    "{}@{}",
+                                    String::from_utf8_lossy(m),
+                                    String::from_utf8_lossy(h)
+                                )
+                            })
+                        });
+                        let name = from
+                            .name
+                            .as_ref()
+                            .map(|n| String::from_utf8_lossy(n).to_string());
                         if let Some(addr) = address {
                             message.from = Some(EmailAddress::new(addr, name));
                         }
@@ -208,9 +230,19 @@ impl ImapClient {
                     // Parse to addresses
                     if let Some(to_addrs) = &envelope.to {
                         for addr in to_addrs {
-                            let address = addr.mailbox.as_ref()
-                                .and_then(|m| addr.host.as_ref().map(|h| format!("{}@{}", String::from_utf8_lossy(m), String::from_utf8_lossy(h))));
-                            let name = addr.name.as_ref().map(|n| String::from_utf8_lossy(n).to_string());
+                            let address = addr.mailbox.as_ref().and_then(|m| {
+                                addr.host.as_ref().map(|h| {
+                                    format!(
+                                        "{}@{}",
+                                        String::from_utf8_lossy(m),
+                                        String::from_utf8_lossy(h)
+                                    )
+                                })
+                            });
+                            let name = addr
+                                .name
+                                .as_ref()
+                                .map(|n| String::from_utf8_lossy(n).to_string());
                             if let Some(a) = address {
                                 message.to.push(EmailAddress::new(a, name));
                             }
@@ -231,7 +263,9 @@ impl ImapClient {
                     // RFC822 returns the full message, accessible via body()
                     if let Some(full_msg_bytes) = fetch.body() {
                         // Try to parse the email to extract text content
-                        if let Some(parsed_mail) = mail_parser::MessageParser::default().parse(full_msg_bytes) {
+                        if let Some(parsed_mail) =
+                            mail_parser::MessageParser::default().parse(full_msg_bytes)
+                        {
                             // Try to get plain text body first
                             if let Some(body_text) = parsed_mail.body_text(0) {
                                 let preview: String = body_text.chars().take(200).collect();
@@ -242,8 +276,7 @@ impl ImapClient {
                             // If no text part, try HTML and strip tags
                             else if let Some(body_html) = parsed_mail.body_html(0) {
                                 // Basic HTML stripping - just remove tags for preview
-                                let text = body_html.replace("<br>", "\n")
-                                    .replace("</p>", "\n");
+                                let text = body_html.replace("<br>", "\n").replace("</p>", "\n");
                                 let preview: String = text
                                     .split('<')
                                     .map(|s| s.split_once('>').map(|(_, rest)| rest).unwrap_or(s))
@@ -264,7 +297,10 @@ impl ImapClient {
         }
 
         if skipped_count > 0 {
-            eprintln!("\nNote: Skipped {} message(s) due to parsing errors.", skipped_count);
+            eprintln!(
+                "\nNote: Skipped {} message(s) due to parsing errors.",
+                skipped_count
+            );
         }
 
         Ok(messages)
@@ -293,8 +329,7 @@ impl ImapClient {
 
             if let Some(body_bytes) = fetch.body() {
                 // Parse with mail-parser
-                if let Some(parsed_mail) = mail_parser::MessageParser::default().parse(body_bytes)
-                {
+                if let Some(parsed_mail) = mail_parser::MessageParser::default().parse(body_bytes) {
                     let mut message = Message::new(uid);
 
                     // Extract subject
@@ -370,7 +405,10 @@ impl ImapClient {
                     // Extract date
                     if let Some(date) = parsed_mail.date() {
                         // Convert mail_parser::DateTime to chrono::DateTime<Utc>
-                        message.date = Some(DateTime::from_timestamp(date.to_timestamp(), 0).unwrap_or_else(|| Utc::now()));
+                        message.date = Some(
+                            DateTime::from_timestamp(date.to_timestamp(), 0)
+                                .unwrap_or_else(Utc::now),
+                        );
                     }
 
                     // Extract body text and HTML
@@ -399,19 +437,24 @@ impl ImapClient {
             }
         }
 
-        Err(anyhow!("Message with UID {} not found in folder {}", uid, folder))
+        Err(anyhow!(
+            "Message with UID {} not found in folder {}",
+            uid,
+            folder
+        ))
     }
 
     pub async fn mark_message_read(&mut self, uid: u32, folder: &str) -> Result<()> {
         self.select_folder(folder).await?;
 
-        let mut store_stream = self.session
+        let mut store_stream = self
+            .session
             .uid_store(&uid.to_string(), "+FLAGS (\\Seen)")
             .await
             .context("Failed to mark message as read")?;
 
         // Consume the stream to complete the operation
-        while let Some(_) = store_stream.next().await {}
+        while store_stream.next().await.is_some() {}
 
         Ok(())
     }
@@ -431,7 +474,10 @@ impl ImapClient {
         self.session
             .uid_copy(&uid_set, dest_folder)
             .await
-            .context(format!("Failed to copy messages to folder: {}", dest_folder))?;
+            .context(format!(
+                "Failed to copy messages to folder: {}",
+                dest_folder
+            ))?;
 
         Ok(())
     }
@@ -473,7 +519,7 @@ impl ImapClient {
             .context("Failed to mark messages as deleted")?;
 
         // Consume the stream to complete the operation
-        while let Some(_) = store_stream.next().await {}
+        while store_stream.next().await.is_some() {}
 
         Ok(())
     }
@@ -517,7 +563,7 @@ impl ImapClient {
             .context(format!("Failed to modify flags: {}", flags))?;
 
         // Consume the stream to complete the operation
-        while let Some(_) = store_stream.next().await {}
+        while store_stream.next().await.is_some() {}
 
         Ok(())
     }
@@ -584,10 +630,10 @@ impl ImapClient {
 
     /// Rename a folder/mailbox
     pub async fn rename_folder(&mut self, from: &str, to: &str) -> Result<()> {
-        self.session
-            .rename(from, to)
-            .await
-            .context(format!("Failed to rename folder from '{}' to '{}'", from, to))?;
+        self.session.rename(from, to).await.context(format!(
+            "Failed to rename folder from '{}' to '{}'",
+            from, to
+        ))?;
 
         Ok(())
     }

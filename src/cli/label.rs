@@ -58,10 +58,7 @@ pub async fn list_labels(output_format: Option<&str>) -> Result<()> {
     let folders = client.list_folders().await?;
 
     // Filter to only labels (folders starting with "Labels/")
-    let labels: Vec<LabelInfo> = folders
-        .iter()
-        .filter_map(folder_to_label)
-        .collect();
+    let labels: Vec<LabelInfo> = folders.iter().filter_map(folder_to_label).collect();
 
     let output = LabelsOutput {
         account: account.email.clone(),

@@ -50,7 +50,9 @@ pub async fn add_to_selection(
     let entries: Vec<(u32, Option<&str>, Option<&str>)> =
         uids.iter().map(|&uid| (uid, None, None)).collect();
 
-    let count = state.add_to_selection(&account.email, folder, &entries).await?;
+    let count = state
+        .add_to_selection(&account.email, folder, &entries)
+        .await?;
 
     let output = SelectActionOutput {
         action: "add".to_string(),
@@ -68,10 +70,7 @@ pub async fn add_to_selection(
 }
 
 /// Add last query results to the selection
-pub async fn add_last_query_to_selection(
-    folder: &str,
-    output_format: Option<&str>,
-) -> Result<()> {
+pub async fn add_last_query_to_selection(folder: &str, output_format: Option<&str>) -> Result<()> {
     let config = Config::load()?;
     let account = config
         .get_default_account()
@@ -92,16 +91,12 @@ pub async fn add_last_query_to_selection(
     // Convert to entries
     let entries: Vec<(u32, Option<&str>, Option<&str>)> = results
         .iter()
-        .map(|r| {
-            (
-                r.uid as u32,
-                r.message_id.as_deref(),
-                r.subject.as_deref(),
-            )
-        })
+        .map(|r| (r.uid as u32, r.message_id.as_deref(), r.subject.as_deref()))
         .collect();
 
-    let count = state.add_to_selection(&account.email, folder, &entries).await?;
+    let count = state
+        .add_to_selection(&account.email, folder, &entries)
+        .await?;
 
     let output = SelectActionOutput {
         action: "add_last".to_string(),
@@ -137,7 +132,9 @@ pub async fn remove_from_selection(
     }
 
     let state = StateManager::new().await?;
-    let count = state.remove_from_selection(&account.email, folder, &uids).await?;
+    let count = state
+        .remove_from_selection(&account.email, folder, &uids)
+        .await?;
 
     let output = SelectActionOutput {
         action: "remove".to_string(),
@@ -177,7 +174,8 @@ pub async fn show_selection(output_format: Option<&str>) -> Result<()> {
     }
 
     // Group by folder
-    let mut folder_map: std::collections::HashMap<String, Vec<_>> = std::collections::HashMap::new();
+    let mut folder_map: std::collections::HashMap<String, Vec<_>> =
+        std::collections::HashMap::new();
     for entry in &entries {
         folder_map
             .entry(entry.folder.clone())
@@ -189,10 +187,7 @@ pub async fn show_selection(output_format: Option<&str>) -> Result<()> {
         .into_iter()
         .map(|(folder, entries)| {
             let uids: Vec<u32> = entries.iter().map(|e| e.uid as u32).collect();
-            let subjects: Vec<String> = entries
-                .iter()
-                .filter_map(|e| e.subject.clone())
-                .collect();
+            let subjects: Vec<String> = entries.iter().filter_map(|e| e.subject.clone()).collect();
             FolderSelection {
                 folder,
                 count: uids.len(),

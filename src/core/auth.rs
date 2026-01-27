@@ -7,8 +7,7 @@ pub struct KeychainManager;
 
 impl KeychainManager {
     pub fn set_password(email: &str, password: &str) -> Result<()> {
-        let entry = Entry::new(SERVICE_NAME, email)
-            .context("Failed to create keychain entry")?;
+        let entry = Entry::new(SERVICE_NAME, email).context("Failed to create keychain entry")?;
 
         entry
             .set_password(password)
@@ -18,8 +17,7 @@ impl KeychainManager {
     }
 
     pub fn get_password(email: &str) -> Result<String> {
-        let entry = Entry::new(SERVICE_NAME, email)
-            .context("Failed to create keychain entry")?;
+        let entry = Entry::new(SERVICE_NAME, email).context("Failed to create keychain entry")?;
 
         let password = entry
             .get_password()
@@ -29,8 +27,7 @@ impl KeychainManager {
     }
 
     pub fn delete_password(email: &str) -> Result<()> {
-        let entry = Entry::new(SERVICE_NAME, email)
-            .context("Failed to create keychain entry")?;
+        let entry = Entry::new(SERVICE_NAME, email).context("Failed to create keychain entry")?;
 
         entry
             .delete_password()

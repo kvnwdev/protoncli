@@ -24,7 +24,10 @@ pub fn format_message_list(account: &str, folder: &str, messages: &[Message]) ->
         }
 
         if let Some(ref date) = message.date {
-            output.push_str(&format!("**Date:** {}\n\n", date.format("%Y-%m-%d %H:%M:%S UTC")));
+            output.push_str(&format!(
+                "**Date:** {}\n\n",
+                date.format("%Y-%m-%d %H:%M:%S UTC")
+            ));
         }
 
         // Flags

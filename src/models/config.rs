@@ -61,8 +61,7 @@ impl Config {
             .context("Failed to get config directory")?
             .join("protoncli");
 
-        fs::create_dir_all(&config_dir)
-            .context("Failed to create config directory")?;
+        fs::create_dir_all(&config_dir).context("Failed to create config directory")?;
 
         Ok(config_dir.join("config.toml"))
     }
@@ -77,19 +76,16 @@ impl Config {
             });
         }
 
-        let contents = fs::read_to_string(&config_path)
-            .context("Failed to read config file")?;
+        let contents = fs::read_to_string(&config_path).context("Failed to read config file")?;
 
-        let config: Config = toml::from_str(&contents)
-            .context("Failed to parse config file")?;
+        let config: Config = toml::from_str(&contents).context("Failed to parse config file")?;
 
         Ok(config)
     }
 
     pub fn save(&self) -> Result<()> {
         let config_path = Self::config_path()?;
-        let toml_str = toml::to_string_pretty(self)
-            .context("Failed to serialize config")?;
+        let toml_str = toml::to_string_pretty(self).context("Failed to serialize config")?;
 
         // Create file with restrictive permissions (0600 on Unix)
         #[cfg(unix)]
@@ -107,8 +103,7 @@ impl Config {
 
         #[cfg(not(unix))]
         {
-            fs::write(&config_path, toml_str)
-                .context("Failed to write config file")?;
+            fs::write(&config_path, toml_str).context("Failed to write config file")?;
         }
 
         Ok(())
@@ -119,7 +114,9 @@ impl Config {
     }
 
     pub fn get_default_account(&self) -> Option<&Account> {
-        self.accounts.iter().find(|a| a.default)
+        self.accounts
+            .iter()
+            .find(|a| a.default)
             .or_else(|| self.accounts.first())
     }
 
@@ -143,10 +140,11 @@ impl Config {
 
         // If we removed the default account and there are still accounts left,
         // make the first one default
-        if self.accounts.len() < original_len && !self.accounts.is_empty() {
-            if !self.accounts.iter().any(|a| a.default) {
-                self.accounts[0].default = true;
-            }
+        if self.accounts.len() < original_len
+            && !self.accounts.is_empty()
+            && !self.accounts.iter().any(|a| a.default)
+        {
+            self.accounts[0].default = true;
         }
 
         self.accounts.len() < original_len

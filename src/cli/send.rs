@@ -73,17 +73,13 @@ impl EmailBuilder {
     }
 
     pub fn build(self) -> Result<Message> {
-        let from = self
-            .from
-            .ok_or_else(|| anyhow!("From address required"))?;
+        let from = self.from.ok_or_else(|| anyhow!("From address required"))?;
 
         if self.to.is_empty() {
             return Err(anyhow!("At least one recipient required"));
         }
 
-        let subject = self
-            .subject
-            .unwrap_or_else(|| "(No subject)".to_string());
+        let subject = self.subject.unwrap_or_else(|| "(No subject)".to_string());
         let body_text = self.body.unwrap_or_default();
 
         // Start building message
@@ -120,10 +116,8 @@ impl EmailBuilder {
 
             // Add each attachment
             for attachment_path in &self.attachments {
-                let file_content = fs::read(attachment_path).context(format!(
-                    "Failed to read attachment: {}",
-                    attachment_path
-                ))?;
+                let file_content = fs::read(attachment_path)
+                    .context(format!("Failed to read attachment: {}", attachment_path))?;
 
                 let filename = Path::new(attachment_path)
                     .file_name()
@@ -145,6 +139,7 @@ impl EmailBuilder {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn send_email(
     from: Option<String>,
     to: Vec<String>,
