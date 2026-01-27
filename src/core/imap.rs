@@ -279,11 +279,11 @@ impl ImapClient {
         // Select folder
         self.select_folder(folder).await?;
 
-        // Fetch full message with RFC822
+        // Fetch full message with RFC822 using UID
         let fetch_query = "RFC822";
         let mut messages_stream = self
             .session
-            .fetch(&uid.to_string(), fetch_query)
+            .uid_fetch(&uid.to_string(), fetch_query)
             .await
             .context("Failed to fetch message")?;
 
