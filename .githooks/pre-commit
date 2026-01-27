@@ -1,0 +1,14 @@
+#!/bin/sh
+# Pre-commit hook to ensure code formatting
+
+echo "Running cargo fmt --check..."
+
+if ! cargo fmt --check; then
+    echo ""
+    echo "❌ Formatting check failed!"
+    echo "Run 'cargo fmt' to fix formatting issues, then try committing again."
+    exit 1
+fi
+
+echo "✅ Formatting check passed"
+exit 0
