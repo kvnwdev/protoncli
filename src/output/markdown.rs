@@ -13,7 +13,13 @@ pub fn format_message_list(account: &str, folder: &str, messages: &[Message]) ->
 
     for message in messages {
         output.push_str("---\n\n");
-        output.push_str(&format!("**UID:** {}\n\n", message.uid));
+
+        // Display shadow UID as ID (primary identifier), fall back to IMAP UID if not assigned
+        let id_display = message
+            .shadow_uid
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| format!("~{}", message.uid));
+        output.push_str(&format!("**ID:** {}\n\n", id_display));
 
         if let Some(ref subject) = message.subject {
             output.push_str(&format!("**Subject:** {}\n\n", subject));
@@ -103,7 +109,12 @@ pub fn print_message(message: &Message) {
         println!("**Date:** {}", date.format("%Y-%m-%d %H:%M:%S %Z"));
     }
 
-    println!("**UID:** {}", message.uid);
+    // Display shadow UID as ID (primary identifier), fall back to IMAP UID if not assigned
+    let id_display = message
+        .shadow_uid
+        .map(|id| id.to_string())
+        .unwrap_or_else(|| format!("~{}", message.uid));
+    println!("**ID:** {}", id_display);
 
     if let Some(msg_id) = &message.message_id {
         println!("**Message-ID:** {}", msg_id);

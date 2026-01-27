@@ -47,6 +47,10 @@ impl MessageFlags {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
+    /// Shadow UID - persistent local ID that never changes across folder moves
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shadow_uid: Option<i64>,
+    /// IMAP UID - used internally for IMAP operations (can change when message moves)
     pub uid: u32,
     pub message_id: Option<String>,
     pub subject: Option<String>,
@@ -58,6 +62,9 @@ pub struct Message {
     pub preview: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_read: Option<bool>,
+    /// Current folder where the message is located
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
 
     // Full message fields (for read command)
     pub bcc: Vec<EmailAddress>,
@@ -72,6 +79,7 @@ pub struct Message {
 impl Message {
     pub fn new(uid: u32) -> Self {
         Self {
+            shadow_uid: None,
             uid,
             message_id: None,
             subject: None,
@@ -88,6 +96,7 @@ impl Message {
             },
             preview: None,
             agent_read: None,
+            folder: None,
             bcc: vec![],
             reply_to: None,
             body_text: None,
