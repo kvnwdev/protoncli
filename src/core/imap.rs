@@ -176,7 +176,7 @@ impl ImapClient {
         while let Some(fetch_result) = messages_stream.next().await {
             let fetch = match fetch_result {
                 Ok(f) => f,
-                Err(_) => {
+                Err(_e) => {
                     // Skip messages that fail to parse and continue with the rest
                     skipped_count += 1;
                     continue;

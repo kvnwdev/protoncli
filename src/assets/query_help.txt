@@ -1,0 +1,90 @@
+# ProtonCLI Query Language Guide
+
+The query language uses Gmail-style syntax to filter messages.
+
+## BASIC SYNTAX
+
+  Query expressions use the format: `field:value`
+
+  **Examples:**
+    protoncli query "`from:user@example.com`"
+    protoncli query "`subject:invoice`"
+
+## SUPPORTED FIELDS
+
+  **Sender & Recipients:**
+    `from:`ADDRESS          Messages from a specific sender
+    `to:`ADDRESS            Messages to a specific recipient
+
+  **Content:**
+    `subject:`TEXT          Search in subject line
+    `body:`TEXT             Search in message body
+
+  **Status:**
+    `unread:true`           Only unread messages
+    `is:unread`             Alternative syntax for unread messages
+
+  **Date Filters:**
+    `newer:`30d             Messages from last 30 days
+    `older:`7d              Messages older than 7 days
+    `date:>`YYYY-MM-DD      Messages after a date
+    `date:<`YYYY-MM-DD      Messages before a date
+    `since:`YYYY-MM-DD      Messages since a date (inclusive)
+    `before:`YYYY-MM-DD     Messages before a date (exclusive)
+
+    **Relative formats:** 7d (days), 2w (weeks), 1m (months), 1y (years)
+
+  **Folder Shorthand:**
+    `in:`Sent              Search in Sent folder
+    `folder:`Archive        Search in Archive folder
+
+  **Size:**
+    `size:>`BYTES           Messages larger than size
+    `size:<`BYTES           Messages smaller than size
+
+## BOOLEAN OPERATORS
+
+  ~AND~ (both conditions must match):
+    from:alice@example.com ~AND~ subject:report
+    from:bob@example.com subject:invoice    (implicit AND)
+
+  ~OR~ (either condition must match):
+    from:alice@example.com ~OR~ from:bob@example.com
+
+  ~NOT~ (negation):
+    ~NOT~ from:spam@example.com
+    subject:important ~NOT~ is:unread
+
+## EXAMPLES
+
+  Recent unread messages:
+    protoncli query "`newer:7d` ~AND~ `is:unread`"
+
+  All messages in Sent folder:
+    protoncli query "`in:Sent`"
+
+  Sent messages in last 30 days:
+    protoncli query "`in:Sent` `newer:30d`"
+
+  Important messages, excluding newsletters:
+    protoncli query "subject:urgent ~NOT~ from:newsletter@example.com"
+
+  Large messages from specific domain:
+    protoncli query "from:example.com ~AND~ size:>1000000"
+
+## COMBINING WITH FLAGS
+
+    `--limit` N             Limit results to N messages
+    `--output` FORMAT       Output format (json, markdown, text)
+    `--preview`             Include body preview
+    `--select`              Add results to selection
+
+  **Example:**
+    protoncli query "newer:7d" `--limit` 10 `--output` json
+
+## NOTES
+
+  - Field names are case-insensitive (FROM: works same as from:)
+  - Use quotes around values with spaces: subject:"project update"
+  - in:folder overrides the --folder flag
+  - Date format: YYYY-MM-DD or relative (30d, 2w, 1m, 1y)

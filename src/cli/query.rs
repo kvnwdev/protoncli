@@ -91,9 +91,13 @@ pub async fn execute_query(
         filter = filter.with_preview(true);
     }
 
+    // Check if query contains `in:folder` - that takes precedence
+    let effective_folder = MessageFilter::extract_folder_from_query(query_str)
+        .unwrap_or_else(|| folder.to_string());
+
     // Connect to IMAP and fetch messages
     let mut client = ImapClient::connect(account).await?;
-    client.select_folder(folder).await?;
+    client.select_folder(&effective_folder).await?;
 
     // Fetch messages using the filter (IMAP does the filtering)
     let messages = client.fetch_messages(&filter).await?;
@@ -162,13 +166,13 @@ pub async fn execute_query(
         .collect();
 
     state
-        .save_query_results(&account.email, folder, query_str, &result_entries)
+        .save_query_results(&account.email, &effective_folder, query_str, &result_entries)
         .await?;
 
     // Optionally add to selection
     let added_to_selection = if select {
         let count = state
-            .add_to_selection(&account.email, folder, &result_entries)
+            .add_to_selection(&account.email, &effective_folder, &result_entries)
             .await?;
         Some(count)
     } else {
@@ -177,7 +181,7 @@ pub async fn execute_query(
 
     let output = QueryOutput {
         account: account.email.clone(),
-        folder: folder.to_string(),
+        folder: effective_folder.clone(),
         query: query_str.to_string(),
         count: query_messages.len(),
         messages: query_messages,

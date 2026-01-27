@@ -635,88 +635,85 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn show_query_help() {
+    // Load help text from asset file at compile time
+    const HELP_TEXT: &str = include_str!("assets/query_help.txt");
+    
     // ANSI color codes
     const BOLD: &str = "\x1b[1m";
-    const GREEN: &str = "\x1b[32m";
     const CYAN: &str = "\x1b[36m";
     const YELLOW: &str = "\x1b[33m";
     const RESET: &str = "\x1b[0m";
-
-    println!("{}{}{}", BOLD, "ProtonCLI Query Language Guide", RESET);
-    println!("\nThe query language uses Gmail-style syntax to filter messages.\n");
-
-    println!("{}BASIC SYNTAX{}", BOLD, RESET);
-    println!("  Query expressions use the format: {}field:value{}\n", CYAN, RESET);
-    println!("  {}Examples:{}", BOLD, RESET);
-    println!("    protoncli inbox --query \"{}from:user@example.com{}\"", GREEN, RESET);
-    println!("    protoncli inbox --query \"{}subject:invoice{}\"\n", GREEN, RESET);
-
-    println!("{}SUPPORTED FIELDS{}\n", BOLD, RESET);
-
-    println!("  {}Sender & Recipients:{}", BOLD, RESET);
-    println!("    {}from:{}ADDRESS          Messages from a specific sender", CYAN, RESET);
-    println!("    {}to:{}ADDRESS            Messages to a specific recipient\n", CYAN, RESET);
-
-    println!("  {}Content:{}", BOLD, RESET);
-    println!("    {}subject:{}TEXT          Search in subject line", CYAN, RESET);
-    println!("    {}body:{}TEXT             Search in message body\n", CYAN, RESET);
-
-    println!("  {}Status:{}", BOLD, RESET);
-    println!("    {}unread:true{}           Only unread messages", CYAN, RESET);
-    println!("    {}is:unread{}             Alternative syntax for unread messages\n", CYAN, RESET);
-
-    println!("  {}Date Filters:{}", BOLD, RESET);
-    println!("    {}date:>{}YYYY-MM-DD      Messages after a date", CYAN, RESET);
-    println!("    {}date:<{}YYYY-MM-DD      Messages before a date", CYAN, RESET);
-    println!("    {}since:{}YYYY-MM-DD      Messages since a date (inclusive)", CYAN, RESET);
-    println!("    {}before:{}YYYY-MM-DD     Messages before a date (exclusive)\n", CYAN, RESET);
-
-    println!("  {}Size:{}", BOLD, RESET);
-    println!("    {}size:>{}BYTES           Messages larger than size", CYAN, RESET);
-    println!("    {}size:<{}BYTES           Messages smaller than size\n", CYAN, RESET);
-
-    println!("{}BOOLEAN OPERATORS{}\n", BOLD, RESET);
-
-    println!("  {}AND{} (both conditions must match):", YELLOW, RESET);
-    println!("    from:alice@example.com {}AND{} subject:report", YELLOW, RESET);
-    println!("    from:bob@example.com subject:invoice    (implicit AND)\n");
-
-    println!("  {}OR{} (either condition must match):", YELLOW, RESET);
-    println!("    from:alice@example.com {}OR{} from:bob@example.com\n", YELLOW, RESET);
-
-    println!("  {}NOT{} (negation):", YELLOW, RESET);
-    println!("    {}NOT{} from:spam@example.com", YELLOW, RESET);
-    println!("    subject:important {}NOT{} is:unread\n", YELLOW, RESET);
-
-    println!("{}COMPLEX EXAMPLES{}\n", BOLD, RESET);
-
-    println!("  Unread messages from a specific sender:");
-    println!("    protoncli inbox --query \"from:support@github.com {}AND{} unread:true\"\n", YELLOW, RESET);
-
-    println!("  Messages from last month:");
-    println!("    protoncli inbox --query \"date:>2024-01-01 {}AND{} date:<2024-02-01\"\n", YELLOW, RESET);
-
-    println!("  Important messages, excluding newsletters:");
-    println!("    protoncli inbox --query \"subject:urgent {}NOT{} from:newsletter@example.com\"\n", YELLOW, RESET);
-
-    println!("  Large messages from specific domain:");
-    println!("    protoncli inbox --query \"from:example.com {}AND{} size:>1000000\"\n", YELLOW, RESET);
-
-    println!("{}COMBINING WITH OTHER FLAGS{}\n", BOLD, RESET);
-    println!("  You can combine queries with other inbox flags:\n");
-    println!("    {}--limit{} N             Limit results to N messages", CYAN, RESET);
-    println!("    {}--output{} FORMAT       Output format (json or markdown)", CYAN, RESET);
-    println!("    {}--agent-unread{}        Filter by agent-read status", CYAN, RESET);
-    println!("    {}--days{} N              Alternative to date: queries\n", CYAN, RESET);
-
-    println!("  {}Example:{}", BOLD, RESET);
-    println!("    protoncli inbox --query \"from:important@example.com\" {}--limit{} 10 {}--output{} markdown\n", CYAN, RESET, CYAN, RESET);
-
-    println!("{}NOTES{}\n", BOLD, RESET);
-    println!("  - Field names are case-insensitive (FROM: works same as from:)");
-    println!("  - Values are case-sensitive");
-    println!("  - Use quotes around values with spaces: subject:\"project update\"");
-    println!("  - Date format must be YYYY-MM-DD");
-    println!("  - Size is in bytes");
+    
+    // Process each line and apply formatting
+    for line in HELP_TEXT.lines() {
+        let formatted = if line.starts_with("# ") {
+            // Main title: bold
+            format!("{}{}{}", BOLD, &line[2..], RESET)
+        } else if line.starts_with("## ") {
+            // Section headers: bold
+            format!("\n{}{}{}", BOLD, &line[3..], RESET)
+        } else {
+            // Process inline markup
+            let mut result = line.to_string();
+            
+            // Process `text` -> cyan (field names, flags)
+            while let Some(start) = result.find('`') {
+                if let Some(end) = result[start+1..].find('`') {
+                    let end = start + 1 + end;
+                    let inner = &result[start+1..end];
+                    result = format!(
+                        "{}{}{}{}{}",
+                        &result[..start],
+                        CYAN,
+                        inner,
+                        RESET,
+                        &result[end+1..]
+                    );
+                } else {
+                    break;
+                }
+            }
+            
+            // Process **text** -> bold
+            while let Some(start) = result.find("**") {
+                if let Some(end) = result[start+2..].find("**") {
+                    let end = start + 2 + end;
+                    let inner = &result[start+2..end];
+                    result = format!(
+                        "{}{}{}{}{}",
+                        &result[..start],
+                        BOLD,
+                        inner,
+                        RESET,
+                        &result[end+2..]
+                    );
+                } else {
+                    break;
+                }
+            }
+            
+            // Process ~text~ -> yellow (operators like AND, OR, NOT)
+            while let Some(start) = result.find('~') {
+                if let Some(end) = result[start+1..].find('~') {
+                    let end = start + 1 + end;
+                    let inner = &result[start+1..end];
+                    result = format!(
+                        "{}{}{}{}{}",
+                        &result[..start],
+                        YELLOW,
+                        inner,
+                        RESET,
+                        &result[end+1..]
+                    );
+                } else {
+                    break;
+                }
+            }
+            
+            result
+        };
+        
+        println!("{}", formatted);
+    }
 }
 
