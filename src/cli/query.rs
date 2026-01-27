@@ -5,11 +5,12 @@ use crate::models::filter::MessageFilter;
 use crate::output::{json, table};
 use anyhow::{anyhow, Result};
 use serde::Serialize;
+use std::collections::HashSet;
 
 #[derive(Serialize)]
 pub struct QueryOutput {
     pub account: String,
-    pub folder: String,
+    pub folders: Vec<String>,
     pub query: String,
     pub count: usize,
     pub messages: Vec<QueryMessage>,
@@ -20,6 +21,8 @@ pub struct QueryOutput {
 #[derive(Serialize)]
 pub struct QueryMessage {
     pub uid: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -38,6 +41,7 @@ pub struct QueryMessage {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum QueryField {
     Uid,
+    Folder,
     MessageId,
     Subject,
     From,
@@ -49,6 +53,7 @@ impl QueryField {
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "uid" => Some(QueryField::Uid),
+            "folder" => Some(QueryField::Folder),
             "message_id" | "messageid" | "id" => Some(QueryField::MessageId),
             "subject" => Some(QueryField::Subject),
             "from" => Some(QueryField::From),
@@ -70,7 +75,7 @@ pub fn parse_fields(fields_str: &str) -> Vec<QueryField> {
 /// Execute a query and optionally add results to selection
 pub async fn execute_query(
     query_str: &str,
-    folder: &str,
+    cli_folders: &[String],
     fields: Option<&str>,
     limit: Option<usize>,
     preview: bool,
@@ -82,56 +87,83 @@ pub async fn execute_query(
         .get_default_account()
         .ok_or_else(|| anyhow!("No default account configured"))?;
 
-    // Build the message filter with query
+    // Build the message filter with query (without limit - we'll apply after merging)
     let mut filter = MessageFilter::new().with_query(query_str.to_string());
-    if let Some(l) = limit {
-        filter = filter.with_limit(l);
-    }
     if preview {
         filter = filter.with_preview(true);
     }
 
-    // Check if query contains `in:folder` - that takes precedence
-    let effective_folder =
-        MessageFilter::extract_folder_from_query(query_str).unwrap_or_else(|| folder.to_string());
+    // Determine effective folders:
+    // 1. Folders from query (in:folder syntax) take precedence
+    // 2. CLI folders (--folder flags) if no in-query folders
+    // 3. Default to INBOX if neither specified
+    let query_folders = MessageFilter::extract_folders_from_query(query_str);
+    let effective_folders: Vec<String> = if !query_folders.is_empty() {
+        query_folders
+    } else if !cli_folders.is_empty() {
+        cli_folders.to_vec()
+    } else {
+        vec!["INBOX".to_string()]
+    };
 
-    // Connect to IMAP and fetch messages
+    // Connect to IMAP
     let mut client = ImapClient::connect(account).await?;
-    client.select_folder(&effective_folder).await?;
-
-    // Fetch messages using the filter (IMAP does the filtering)
-    let (mut messages, _stats) = client.fetch_messages(&filter).await?;
 
     // Initialize state manager for shadow UID assignment
     let state = StateManager::new().await?;
 
-    // Assign shadow UIDs to all messages
-    for message in &mut messages {
-        message.folder = Some(effective_folder.clone());
+    // Fetch messages from all folders
+    let mut all_messages: Vec<crate::models::message::Message> = Vec::new();
+    let mut seen_message_ids: HashSet<String> = HashSet::new();
 
-        // Get or create shadow UID for this message
-        if let Some(ref msg_id) = message.message_id {
-            let shadow_uid = state
-                .get_or_create_shadow_uid(
-                    &account.email,
-                    &effective_folder,
-                    message.uid,
-                    Some(msg_id),
-                    message.subject.as_deref(),
-                    message.from.as_ref().map(|f| f.address.as_str()),
-                    message.date,
-                )
-                .await?;
-            message.shadow_uid = Some(shadow_uid);
+    for folder in &effective_folders {
+        client.select_folder(folder).await?;
+        let (folder_messages, _stats) = client.fetch_messages(&filter).await?;
+
+        for mut message in folder_messages {
+            message.folder = Some(folder.clone());
+
+            // Deduplicate by message_id - keep first occurrence
+            if let Some(ref msg_id) = message.message_id {
+                if seen_message_ids.contains(msg_id) {
+                    continue;
+                }
+                seen_message_ids.insert(msg_id.clone());
+
+                // Assign shadow UID
+                let shadow_uid = state
+                    .get_or_create_shadow_uid(
+                        &account.email,
+                        folder,
+                        message.uid,
+                        Some(msg_id),
+                        message.subject.as_deref(),
+                        message.from.as_ref().map(|f| f.address.as_str()),
+                        message.date,
+                    )
+                    .await?;
+                message.shadow_uid = Some(shadow_uid);
+            }
+
+            all_messages.push(message);
         }
+    }
+
+    // Sort by date (newest first)
+    all_messages.sort_by(|a, b| b.date.cmp(&a.date));
+
+    // Apply limit after merging
+    if let Some(l) = limit {
+        all_messages.truncate(l);
     }
 
     // Parse which fields to include
     let requested_fields = fields.map(parse_fields);
     let show_all_fields = requested_fields.is_none();
+    let show_multiple_folders = effective_folders.len() > 1;
 
     // Convert to output format
-    let query_messages: Vec<QueryMessage> = messages
+    let query_messages: Vec<QueryMessage> = all_messages
         .iter()
         .map(|msg| {
             let include = |field: QueryField| -> bool {
@@ -143,6 +175,12 @@ pub async fn execute_query(
 
             QueryMessage {
                 uid: msg.uid,
+                // Always include folder when querying multiple folders, or if explicitly requested
+                folder: if show_multiple_folders || include(QueryField::Folder) {
+                    msg.folder.clone()
+                } else {
+                    None
+                },
                 message_id: if include(QueryField::MessageId) {
                     msg.message_id.clone()
                 } else {
@@ -189,8 +227,9 @@ pub async fn execute_query(
         })
         .collect();
 
-    // Save query results for potential `select last`
-    let result_entries: Vec<(u32, Option<&str>, Option<&str>, Option<i64>)> = messages
+    // Save query results for potential `select last` - use first folder for compatibility
+    let primary_folder = effective_folders.first().map(|s| s.as_str()).unwrap_or("INBOX");
+    let result_entries: Vec<(u32, Option<&str>, Option<&str>, Option<i64>)> = all_messages
         .iter()
         .map(|msg| {
             (
@@ -203,18 +242,13 @@ pub async fn execute_query(
         .collect();
 
     state
-        .save_query_results(
-            &account.email,
-            &effective_folder,
-            query_str,
-            &result_entries,
-        )
+        .save_query_results(&account.email, primary_folder, query_str, &result_entries)
         .await?;
 
     // Optionally add to selection
     let added_to_selection = if select {
         let count = state
-            .add_to_selection(&account.email, &effective_folder, &result_entries)
+            .add_to_selection(&account.email, primary_folder, &result_entries)
             .await?;
         Some(count)
     } else {
@@ -223,7 +257,7 @@ pub async fn execute_query(
 
     let output = QueryOutput {
         account: account.email.clone(),
-        folder: effective_folder.clone(),
+        folders: effective_folders.clone(),
         query: query_str.to_string(),
         count: query_messages.len(),
         messages: query_messages,
@@ -234,7 +268,8 @@ pub async fn execute_query(
         "json" => json::print_json(&output)?,
         "markdown" => print_markdown(&output)?,
         "table" => {
-            table::print_message_table(&output.account, &output.folder, &messages);
+            let folders_str = output.folders.join(", ");
+            table::print_message_table(&output.account, &folders_str, &all_messages);
             if let Some(count) = output.added_to_selection {
                 println!();
                 println!("✓ Added {} message(s) to selection", count);
@@ -247,9 +282,10 @@ pub async fn execute_query(
 }
 
 fn print_text(output: &QueryOutput) -> Result<()> {
+    let folders_str = output.folders.join(", ");
     println!(
         "Query '{}' in {}/{}: {} result(s)",
-        output.query, output.account, output.folder, output.count
+        output.query, output.account, folders_str, output.count
     );
 
     if output.count == 0 {
@@ -258,9 +294,16 @@ fn print_text(output: &QueryOutput) -> Result<()> {
 
     println!();
 
+    let show_folder = output.folders.len() > 1;
+
     for msg in &output.messages {
         let mut parts = vec![format!("UID {}", msg.uid)];
 
+        if show_folder {
+            if let Some(folder) = &msg.folder {
+                parts.push(format!("[{}]", folder));
+            }
+        }
         if let Some(from) = &msg.from {
             parts.push(format!("from: {}", from));
         }
@@ -293,11 +336,14 @@ fn print_text(output: &QueryOutput) -> Result<()> {
 }
 
 fn print_markdown(output: &QueryOutput) -> Result<()> {
+    let folders_str = output.folders.join(", ");
+    let show_folder = output.folders.len() > 1;
+
     println!("## Query Results");
     println!();
     println!(
-        "**Query:** `{}`  \n**Folder:** {}  \n**Results:** {}",
-        output.query, output.folder, output.count
+        "**Query:** `{}`  \n**Folders:** {}  \n**Results:** {}",
+        output.query, folders_str, output.count
     );
     println!();
 
@@ -306,14 +352,27 @@ fn print_markdown(output: &QueryOutput) -> Result<()> {
         return Ok(());
     }
 
-    println!("| UID | From | Subject | Date |");
-    println!("|-----|------|---------|------|");
+    if show_folder {
+        println!("| UID | Folder | From | Subject | Date |");
+        println!("|-----|--------|------|---------|------|");
 
-    for msg in &output.messages {
-        let from = msg.from.as_deref().unwrap_or("-");
-        let subject = msg.subject.as_deref().unwrap_or("-");
-        let date = msg.date.as_deref().unwrap_or("-");
-        println!("| {} | {} | {} | {} |", msg.uid, from, subject, date);
+        for msg in &output.messages {
+            let folder = msg.folder.as_deref().unwrap_or("-");
+            let from = msg.from.as_deref().unwrap_or("-");
+            let subject = msg.subject.as_deref().unwrap_or("-");
+            let date = msg.date.as_deref().unwrap_or("-");
+            println!("| {} | {} | {} | {} | {} |", msg.uid, folder, from, subject, date);
+        }
+    } else {
+        println!("| UID | From | Subject | Date |");
+        println!("|-----|------|---------|------|");
+
+        for msg in &output.messages {
+            let from = msg.from.as_deref().unwrap_or("-");
+            let subject = msg.subject.as_deref().unwrap_or("-");
+            let date = msg.date.as_deref().unwrap_or("-");
+            println!("| {} | {} | {} | {} |", msg.uid, from, subject, date);
+        }
     }
 
     if let Some(count) = output.added_to_selection {

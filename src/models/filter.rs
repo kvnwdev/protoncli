@@ -213,22 +213,25 @@ impl MessageFilter {
         }
     }
 
-    /// Extract folder from query string if `in:` or `folder:` is present
-    pub fn extract_folder_from_query(query: &str) -> Option<String> {
-        // Simple extraction - look for in:folder or folder:folder
+    /// Extract all folders from query string (supports multiple in:/folder: clauses)
+    /// Returns folders in order of appearance, deduplicated
+    pub fn extract_folders_from_query(query: &str) -> Vec<String> {
+        let mut folders = Vec::new();
         for token in query.split_whitespace() {
             if let Some(folder) = token.strip_prefix("in:") {
                 if !folder.is_empty() {
-                    return Some(folder.to_string());
+                    folders.push(folder.to_string());
                 }
-            }
-            if let Some(folder) = token.strip_prefix("folder:") {
+            } else if let Some(folder) = token.strip_prefix("folder:") {
                 if !folder.is_empty() {
-                    return Some(folder.to_string());
+                    folders.push(folder.to_string());
                 }
             }
         }
-        None
+        // Deduplicate while preserving order
+        let mut seen = std::collections::HashSet::new();
+        folders.retain(|f| seen.insert(f.clone()));
+        folders
     }
 }
 
@@ -271,38 +274,6 @@ mod tests {
         assert!(MessageFilter::parse_relative_days("abc").is_err());
         assert!(MessageFilter::parse_relative_days("d").is_err());
         assert!(MessageFilter::parse_relative_days("").is_err());
-    }
-
-    #[test]
-    fn test_extract_folder_in_syntax() {
-        assert_eq!(
-            MessageFilter::extract_folder_from_query("in:Sent"),
-            Some("Sent".to_string())
-        );
-        assert_eq!(
-            MessageFilter::extract_folder_from_query("from:test@example.com in:Archive"),
-            Some("Archive".to_string())
-        );
-    }
-
-    #[test]
-    fn test_extract_folder_folder_syntax() {
-        assert_eq!(
-            MessageFilter::extract_folder_from_query("folder:Drafts"),
-            Some("Drafts".to_string())
-        );
-    }
-
-    #[test]
-    fn test_extract_folder_none() {
-        assert_eq!(
-            MessageFilter::extract_folder_from_query("from:test@example.com"),
-            None
-        );
-        assert_eq!(
-            MessageFilter::extract_folder_from_query("subject:hello"),
-            None
-        );
     }
 
     #[test]
@@ -445,14 +416,61 @@ mod tests {
         assert!(imap_query.contains("UNSEEN"));
     }
 
+    // Tests for extract_folders_from_query (multi-folder support)
+
     #[test]
-    fn test_extract_folder_with_other_tokens() {
-        // Folder extraction should work even with other query tokens
-        assert_eq!(
-            MessageFilter::extract_folder_from_query(
-                "from:test@example.com in:Archive subject:hello"
-            ),
-            Some("Archive".to_string())
-        );
+    fn test_extract_folders_single() {
+        let folders = MessageFilter::extract_folders_from_query("in:Sent");
+        assert_eq!(folders, vec!["Sent"]);
+    }
+
+    #[test]
+    fn test_extract_folders_multiple() {
+        let folders = MessageFilter::extract_folders_from_query("in:Sent in:Archive");
+        assert_eq!(folders, vec!["Sent", "Archive"]);
+    }
+
+    #[test]
+    fn test_extract_folders_mixed_syntax() {
+        let folders = MessageFilter::extract_folders_from_query("in:Sent folder:Archive in:Drafts");
+        assert_eq!(folders, vec!["Sent", "Archive", "Drafts"]);
+    }
+
+    #[test]
+    fn test_extract_folders_with_other_tokens() {
+        let folders =
+            MessageFilter::extract_folders_from_query("from:alice@example.com in:Sent in:Archive");
+        assert_eq!(folders, vec!["Sent", "Archive"]);
+    }
+
+    #[test]
+    fn test_extract_folders_deduplication() {
+        let folders = MessageFilter::extract_folders_from_query("in:Sent in:Archive in:Sent");
+        assert_eq!(folders, vec!["Sent", "Archive"]);
+    }
+
+    #[test]
+    fn test_extract_folders_preserves_order() {
+        let folders =
+            MessageFilter::extract_folders_from_query("in:Archive in:Sent in:INBOX in:Drafts");
+        assert_eq!(folders, vec!["Archive", "Sent", "INBOX", "Drafts"]);
+    }
+
+    #[test]
+    fn test_extract_folders_empty_query() {
+        let folders = MessageFilter::extract_folders_from_query("");
+        assert!(folders.is_empty());
+    }
+
+    #[test]
+    fn test_extract_folders_no_folders() {
+        let folders = MessageFilter::extract_folders_from_query("from:alice@example.com subject:test");
+        assert!(folders.is_empty());
+    }
+
+    #[test]
+    fn test_extract_folders_empty_folder_name_ignored() {
+        let folders = MessageFilter::extract_folders_from_query("in: in:Sent");
+        assert_eq!(folders, vec!["Sent"]);
     }
 }
