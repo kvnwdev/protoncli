@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(name = "protoncli")]
-#[command(version = "0.1.0")]
+#[command(version = "0.2.0")]
 #[command(about = "A production-ready CLI email client for ProtonMail Bridge", long_about = None)]
 struct Cli {
     #[command(subcommand)]
@@ -94,6 +94,99 @@ enum Commands {
     },
     /// Show query language documentation
     QueryHelp,
+    /// Move messages to another folder
+    Move {
+        /// Message UID(s)
+        #[arg(required = true)]
+        uids: Vec<u32>,
+        /// Source folder
+        #[arg(long, default_value = "INBOX")]
+        from: String,
+        /// Destination folder
+        #[arg(long, required = true)]
+        to: String,
+        /// Output format (json or text)
+        #[arg(long, short)]
+        output: Option<String>,
+    },
+    /// Copy messages to another folder
+    Copy {
+        /// Message UID(s)
+        #[arg(required = true)]
+        uids: Vec<u32>,
+        /// Source folder
+        #[arg(long, default_value = "INBOX")]
+        from: String,
+        /// Destination folder
+        #[arg(long, required = true)]
+        to: String,
+        /// Output format (json or text)
+        #[arg(long, short)]
+        output: Option<String>,
+    },
+    /// Delete messages (move to Trash or permanent delete)
+    Delete {
+        /// Message UID(s)
+        #[arg(required = true)]
+        uids: Vec<u32>,
+        /// Source folder
+        #[arg(long, default_value = "INBOX")]
+        from: String,
+        /// Permanently delete (bypasses Trash)
+        #[arg(long)]
+        permanent: bool,
+        /// Skip confirmation for permanent delete
+        #[arg(long, short)]
+        yes: bool,
+        /// Output format (json or text)
+        #[arg(long, short)]
+        output: Option<String>,
+    },
+    /// Archive messages (move to Archive folder)
+    Archive {
+        /// Message UID(s)
+        #[arg(required = true)]
+        uids: Vec<u32>,
+        /// Source folder
+        #[arg(long, default_value = "INBOX")]
+        from: String,
+        /// Output format (json or text)
+        #[arg(long, short)]
+        output: Option<String>,
+    },
+    /// Modify message flags (read/unread, starred, labels) and optionally move
+    Flag {
+        /// Message UID(s)
+        #[arg(required = true)]
+        uids: Vec<u32>,
+        /// Source folder
+        #[arg(long, default_value = "INBOX")]
+        from: String,
+        /// Mark as read
+        #[arg(long)]
+        read: bool,
+        /// Mark as unread
+        #[arg(long)]
+        unread: bool,
+        /// Star the message
+        #[arg(long)]
+        starred: bool,
+        /// Unstar the message
+        #[arg(long)]
+        unstarred: bool,
+        /// Add label(s)
+        #[arg(long = "label")]
+        labels: Vec<String>,
+        /// Remove label(s)
+        #[arg(long = "unlabel")]
+        unlabels: Vec<String>,
+        /// Move to folder after applying flags
+        #[arg(long = "move")]
+        move_to: Option<String>,
+        /// Output format (json or text)
+        #[arg(long, short)]
+        output: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -170,6 +263,54 @@ async fn main() -> anyhow::Result<()> {
             cli::send::send_email(from, to, cc, bcc, subject, body, body_file, attach).await?
         }
         Commands::QueryHelp => show_query_help(),
+        Commands::Move {
+            uids,
+            from,
+            to,
+            output,
+        } => cli::actions::move_messages(uids, &from, &to, output.as_deref()).await?,
+        Commands::Copy {
+            uids,
+            from,
+            to,
+            output,
+        } => cli::actions::copy_messages(uids, &from, &to, output.as_deref()).await?,
+        Commands::Delete {
+            uids,
+            from,
+            permanent,
+            yes,
+            output,
+        } => cli::actions::delete_messages(uids, &from, permanent, yes, output.as_deref()).await?,
+        Commands::Archive { uids, from, output } => {
+            cli::actions::archive_messages(uids, &from, output.as_deref()).await?
+        }
+        Commands::Flag {
+            uids,
+            from,
+            read,
+            unread,
+            starred,
+            unstarred,
+            labels,
+            unlabels,
+            move_to,
+            output,
+        } => {
+            cli::actions::modify_flags(
+                uids,
+                &from,
+                read,
+                unread,
+                starred,
+                unstarred,
+                labels,
+                unlabels,
+                move_to,
+                output.as_deref(),
+            )
+            .await?
+        }
     }
 
     Ok(())

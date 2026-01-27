@@ -416,4 +416,149 @@ impl ImapClient {
         Ok(())
     }
 
+    /// Copy messages to a destination folder
+    pub async fn copy_messages(&mut self, uids: &[u32], dest_folder: &str) -> Result<()> {
+        if uids.is_empty() {
+            return Ok(());
+        }
+
+        let uid_set = uids
+            .iter()
+            .map(|u| u.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        self.session
+            .copy(&uid_set, dest_folder)
+            .await
+            .context(format!("Failed to copy messages to folder: {}", dest_folder))?;
+
+        Ok(())
+    }
+
+    /// Move messages to a destination folder (COPY + DELETE + EXPUNGE)
+    pub async fn move_messages(&mut self, uids: &[u32], dest_folder: &str) -> Result<()> {
+        if uids.is_empty() {
+            return Ok(());
+        }
+
+        // Copy to destination
+        self.copy_messages(uids, dest_folder).await?;
+
+        // Mark as deleted in source
+        self.mark_messages_deleted(uids).await?;
+
+        // Expunge deleted messages
+        self.expunge().await?;
+
+        Ok(())
+    }
+
+    /// Mark messages with \Deleted flag
+    pub async fn mark_messages_deleted(&mut self, uids: &[u32]) -> Result<()> {
+        if uids.is_empty() {
+            return Ok(());
+        }
+
+        let uid_set = uids
+            .iter()
+            .map(|u| u.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let mut store_stream = self
+            .session
+            .store(&uid_set, "+FLAGS (\\Deleted)")
+            .await
+            .context("Failed to mark messages as deleted")?;
+
+        // Consume the stream to complete the operation
+        while let Some(_) = store_stream.next().await {}
+
+        Ok(())
+    }
+
+    /// Expunge deleted messages from the current folder
+    pub async fn expunge(&mut self) -> Result<()> {
+        let expunge_stream = self
+            .session
+            .expunge()
+            .await
+            .context("Failed to expunge deleted messages")?;
+
+        // Collect the stream to consume it and complete the operation
+        let _: Vec<_> = expunge_stream.collect().await;
+
+        Ok(())
+    }
+
+    /// Modify flags on messages (add or remove)
+    pub async fn modify_flags(&mut self, uids: &[u32], flags: &str, add: bool) -> Result<()> {
+        if uids.is_empty() {
+            return Ok(());
+        }
+
+        let uid_set = uids
+            .iter()
+            .map(|u| u.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let flag_command = if add {
+            format!("+FLAGS ({})", flags)
+        } else {
+            format!("-FLAGS ({})", flags)
+        };
+
+        let mut store_stream = self
+            .session
+            .store(&uid_set, &flag_command)
+            .await
+            .context(format!("Failed to modify flags: {}", flags))?;
+
+        // Consume the stream to complete the operation
+        while let Some(_) = store_stream.next().await {}
+
+        Ok(())
+    }
+
+    /// Mark multiple messages as read
+    pub async fn mark_messages_read(&mut self, uids: &[u32]) -> Result<()> {
+        self.modify_flags(uids, "\\Seen", true).await
+    }
+
+    /// Mark multiple messages as unread
+    pub async fn mark_messages_unread(&mut self, uids: &[u32]) -> Result<()> {
+        self.modify_flags(uids, "\\Seen", false).await
+    }
+
+    /// Star messages (add \Flagged)
+    pub async fn star_messages(&mut self, uids: &[u32]) -> Result<()> {
+        self.modify_flags(uids, "\\Flagged", true).await
+    }
+
+    /// Unstar messages (remove \Flagged)
+    pub async fn unstar_messages(&mut self, uids: &[u32]) -> Result<()> {
+        self.modify_flags(uids, "\\Flagged", false).await
+    }
+
+    /// Check if a folder exists
+    pub async fn folder_exists(&mut self, folder: &str) -> Result<bool> {
+        let mut mailboxes_stream = self
+            .session
+            .list(None, Some(folder))
+            .await
+            .context("Failed to check folder existence")?;
+
+        // Check if the folder is in the results
+        while let Some(mailbox_result) = mailboxes_stream.next().await {
+            if let Ok(mailbox) = mailbox_result {
+                if mailbox.name() == folder {
+                    return Ok(true);
+                }
+            }
+        }
+
+        Ok(false)
+    }
 }

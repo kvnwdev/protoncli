@@ -62,11 +62,14 @@ pub async fn list_inbox(
         let mut filtered_messages = Vec::new();
 
         for message in messages {
-            let is_read = state
-                .is_agent_read(&account.email, "INBOX", message.uid)
-                .await?;
-
-            if !is_read {
+            // Use message_id for agent_read lookup
+            if let Some(ref msg_id) = message.message_id {
+                let is_read = state.is_agent_read(&account.email, msg_id).await?;
+                if !is_read {
+                    filtered_messages.push(message);
+                }
+            } else {
+                // No message_id means we haven't seen it before
                 filtered_messages.push(message);
             }
         }
@@ -87,10 +90,6 @@ pub async fn list_inbox(
                     message.date,
                 )
                 .await?;
-
-            // Check and set agent_read status
-            let _is_read = state.is_agent_read(&account.email, "INBOX", message.uid).await?;
-            // Note: We would need to make Message mutable to set this
         }
     }
 
@@ -140,11 +139,24 @@ pub async fn read_message(
         client.mark_message_read(uid, folder_name).await?;
     }
 
-    // Always mark as agent-read in local state
-    let state = StateManager::new().await?;
-    state
-        .mark_agent_read(&account.email, folder_name, uid)
-        .await?;
+    // Always mark as agent-read in local state (using message_id as stable identifier)
+    if let Some(ref msg_id) = message.message_id {
+        let state = StateManager::new().await?;
+        // First upsert to ensure the message exists in our database
+        state
+            .upsert_message(
+                &account.email,
+                folder_name,
+                uid,
+                Some(msg_id),
+                message.subject.as_deref(),
+                message.from.as_ref().map(|f| f.address.as_str()),
+                message.date,
+            )
+            .await?;
+        // Then mark as agent-read
+        state.mark_agent_read(&account.email, msg_id).await?;
+    }
 
     // Output based on format
     match output_format.unwrap_or("markdown") {
