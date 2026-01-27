@@ -114,7 +114,7 @@ pub async fn execute_query(
                 show_all_fields
                     || requested_fields
                         .as_ref()
-                        .map_or(false, |f| f.contains(&field))
+                        .is_some_and(|f| f.contains(&field))
             };
 
             QueryMessage {

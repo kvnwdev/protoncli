@@ -235,6 +235,7 @@ impl StateManager {
 
     /// Upsert a message using message_id as the stable identifier.
     /// folder/uid represent the current location and are updated on conflict.
+    #[allow(clippy::too_many_arguments)]
     pub async fn upsert_message(
         &self,
         account: &str,
@@ -548,7 +549,7 @@ impl StateManager {
         let flag_params_json = draft
             .flag_params
             .as_ref()
-            .map(|p| serde_json::to_string(p))
+            .map(serde_json::to_string)
             .transpose()?;
 
         sqlx::query(
@@ -580,6 +581,7 @@ impl StateManager {
     }
 
     /// Get the current draft for an account
+    #[allow(clippy::type_complexity)]
     pub async fn get_draft(&self, account: &str) -> Result<Option<Draft>> {
         let row: Option<(
             String,

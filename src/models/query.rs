@@ -109,10 +109,10 @@ impl QueryParser {
                 ));
             }
 
-            let (operator, clean_value) = if value.starts_with('>') {
-                (Operator::GreaterThan, &value[1..])
-            } else if value.starts_with('<') {
-                (Operator::LessThan, &value[1..])
+            let (operator, clean_value) = if let Some(stripped) = value.strip_prefix('>') {
+                (Operator::GreaterThan, stripped)
+            } else if let Some(stripped) = value.strip_prefix('<') {
+                (Operator::LessThan, stripped)
             } else {
                 (Operator::Equals, value)
             };

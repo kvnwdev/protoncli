@@ -299,6 +299,7 @@ pub async fn copy_messages(
 }
 
 /// Delete messages (move to Trash or permanent delete)
+#[allow(clippy::too_many_arguments)]
 pub async fn delete_messages(
     uids: Vec<u32>,
     from: &str,
@@ -543,6 +544,7 @@ pub async fn archive_messages(
 }
 
 /// Modify message flags (read/unread, starred, labels) and optionally move
+#[allow(clippy::too_many_arguments)]
 pub async fn modify_flags(
     uids: Vec<u32>,
     from: &str,

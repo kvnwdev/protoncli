@@ -140,10 +140,11 @@ impl Config {
 
         // If we removed the default account and there are still accounts left,
         // make the first one default
-        if self.accounts.len() < original_len && !self.accounts.is_empty() {
-            if !self.accounts.iter().any(|a| a.default) {
-                self.accounts[0].default = true;
-            }
+        if self.accounts.len() < original_len
+            && !self.accounts.is_empty()
+            && !self.accounts.iter().any(|a| a.default)
+        {
+            self.accounts[0].default = true;
         }
 
         self.accounts.len() < original_len

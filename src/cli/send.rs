@@ -139,6 +139,7 @@ impl EmailBuilder {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn send_email(
     from: Option<String>,
     to: Vec<String>,

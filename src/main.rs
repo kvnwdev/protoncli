@@ -676,12 +676,12 @@ fn show_query_help() {
 
     // Process each line and apply formatting
     for line in HELP_TEXT.lines() {
-        let formatted = if line.starts_with("# ") {
+        let formatted = if let Some(stripped) = line.strip_prefix("# ") {
             // Main title: bold
-            format!("{}{}{}", BOLD, &line[2..], RESET)
-        } else if line.starts_with("## ") {
+            format!("{}{}{}", BOLD, stripped, RESET)
+        } else if let Some(stripped) = line.strip_prefix("## ") {
             // Section headers: bold
-            format!("\n{}{}{}", BOLD, &line[3..], RESET)
+            format!("\n{}{}{}", BOLD, stripped, RESET)
         } else {
             // Process inline markup
             let mut result = line.to_string();

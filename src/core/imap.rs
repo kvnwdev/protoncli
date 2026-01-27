@@ -407,7 +407,7 @@ impl ImapClient {
                         // Convert mail_parser::DateTime to chrono::DateTime<Utc>
                         message.date = Some(
                             DateTime::from_timestamp(date.to_timestamp(), 0)
-                                .unwrap_or_else(|| Utc::now()),
+                                .unwrap_or_else(Utc::now),
                         );
                     }
 
@@ -454,7 +454,7 @@ impl ImapClient {
             .context("Failed to mark message as read")?;
 
         // Consume the stream to complete the operation
-        while let Some(_) = store_stream.next().await {}
+        while store_stream.next().await.is_some() {}
 
         Ok(())
     }
@@ -519,7 +519,7 @@ impl ImapClient {
             .context("Failed to mark messages as deleted")?;
 
         // Consume the stream to complete the operation
-        while let Some(_) = store_stream.next().await {}
+        while store_stream.next().await.is_some() {}
 
         Ok(())
     }
@@ -563,7 +563,7 @@ impl ImapClient {
             .context(format!("Failed to modify flags: {}", flags))?;
 
         // Consume the stream to complete the operation
-        while let Some(_) = store_stream.next().await {}
+        while store_stream.next().await.is_some() {}
 
         Ok(())
     }

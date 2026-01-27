@@ -63,8 +63,8 @@ pub async fn add_account(email: &str) -> Result<()> {
     config.save()?;
 
     println!("✓ Account {} added successfully", email);
-    println!("  IMAP: {}:{}", "127.0.0.1", 1143);
-    println!("  SMTP: {}:{}", "127.0.0.1", 1025);
+    println!("  IMAP: 127.0.0.1:{}", 1143);
+    println!("  SMTP: 127.0.0.1:{}", 1025);
     println!();
     println!("Test connection with: protoncli account test {}", email);
 
