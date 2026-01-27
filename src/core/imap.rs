@@ -3,6 +3,7 @@ use crate::models::account::{Account, SecurityType};
 use crate::models::filter::MessageFilter;
 use crate::models::folder::Folder;
 use crate::models::message::{EmailAddress, Message, MessageFlags};
+use crate::utils::batch::{chunk_uids, FETCH_BATCH_SIZE};
 use anyhow::{anyhow, Context, Result};
 use async_imap::Session;
 use async_native_tls::{TlsConnector, TlsStream};
@@ -10,6 +11,19 @@ use chrono::{DateTime, Utc};
 use futures::stream::StreamExt;
 use tokio::net::TcpStream;
 use tokio_util::compat::{Compat, TokioAsyncReadCompatExt};
+
+/// Statistics about a fetch operation (useful for diagnostics)
+#[derive(Debug, Clone, Default)]
+pub struct FetchStats {
+    /// Number of UIDs returned by IMAP search
+    pub search_count: usize,
+    /// Number of UIDs requested for fetch (after limit applied)
+    pub fetch_count: usize,
+    /// Number of messages successfully parsed
+    pub parsed_count: usize,
+    /// Number of messages that failed to parse
+    pub skipped_count: usize,
+}
 
 pub struct ImapClient {
     session: Session<TlsStream<Compat<TcpStream>>>,
@@ -134,7 +148,9 @@ impl ImapClient {
         Ok(())
     }
 
-    pub async fn fetch_messages(&mut self, filter: &MessageFilter) -> Result<Vec<Message>> {
+    pub async fn fetch_messages(&mut self, filter: &MessageFilter) -> Result<(Vec<Message>, FetchStats)> {
+        let mut stats = FetchStats::default();
+
         // Build and execute search query
         let search_query = filter.build_imap_search_query()?;
         let uids_set = self
@@ -145,9 +161,10 @@ impl ImapClient {
 
         let mut uids: Vec<u32> = uids_set.into_iter().collect();
         uids.sort(); // Ensure deterministic ordering
+        stats.search_count = uids.len();
 
         if uids.is_empty() {
-            return Ok(vec![]);
+            return Ok((vec![], stats));
         }
 
         // Apply limit if specified
@@ -156,158 +173,151 @@ impl ImapClient {
         } else {
             uids.into_iter().rev().collect()
         };
+        stats.fetch_count = uids_to_fetch.len();
 
-        // Fetch message headers
-        let uid_set = uids_to_fetch
-            .iter()
-            .map(|u| u.to_string())
-            .collect::<Vec<_>>()
-            .join(",");
-
-        // Conditionally fetch body text for preview
+        // Fetch headers using BODY.PEEK[HEADER] and parse with mail-parser
+        // This avoids async-imap's ENVELOPE parsing which has Unicode issues
+        // For preview, fetch full RFC822 to properly parse MIME content
         let fetch_query = if filter.preview {
-            "(UID FLAGS ENVELOPE RFC822)"
+            "(UID FLAGS RFC822)"
         } else {
-            "(UID FLAGS ENVELOPE BODY.PEEK[HEADER])"
+            "(UID FLAGS BODY.PEEK[HEADER])"
         };
 
-        let mut messages_stream = self
-            .session
-            .uid_fetch(&uid_set, fetch_query)
-            .await
-            .context("Failed to fetch messages")?;
-
         let mut messages = Vec::new();
-        let mut skipped_count = 0;
 
-        while let Some(fetch_result) = messages_stream.next().await {
-            let fetch = match fetch_result {
-                Ok(f) => f,
-                Err(_e) => {
-                    // Skip messages that fail to parse and continue with the rest
-                    skipped_count += 1;
-                    continue;
-                }
-            };
+        // Fetch in batches to work around ProtonMail Bridge issues with large requests
+        let batches = chunk_uids(&uids_to_fetch, FETCH_BATCH_SIZE);
 
-            if let Some(uid) = fetch.uid {
-                let mut message = Message::new(uid);
+        for batch in batches.iter() {
+            let uid_set = batch
+                .iter()
+                .map(|u| u.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
 
-                // Parse flags
-                let flags: Vec<_> = fetch.flags().collect();
-                message.flags = MessageFlags::from_imap_flags(&flags);
+            let mut messages_stream = self
+                .session
+                .uid_fetch(&uid_set, fetch_query)
+                .await
+                .context("Failed to fetch messages")?;
 
-                // Parse envelope
-                if let Some(envelope) = fetch.envelope() {
-                    message.subject = envelope
-                        .subject
-                        .as_ref()
-                        .map(|s| String::from_utf8_lossy(s).to_string());
-                    message.message_id = envelope
-                        .message_id
-                        .as_ref()
-                        .map(|s| String::from_utf8_lossy(s).to_string());
-
-                    // Parse from address
-                    if let Some(from) = envelope.from.as_ref().and_then(|f| f.first()) {
-                        let address = from.mailbox.as_ref().and_then(|m| {
-                            from.host.as_ref().map(|h| {
-                                format!(
-                                    "{}@{}",
-                                    String::from_utf8_lossy(m),
-                                    String::from_utf8_lossy(h)
-                                )
-                            })
-                        });
-                        let name = from
-                            .name
-                            .as_ref()
-                            .map(|n| String::from_utf8_lossy(n).to_string());
-                        if let Some(addr) = address {
-                            message.from = Some(EmailAddress::new(addr, name));
-                        }
+            while let Some(fetch_result) = messages_stream.next().await {
+                let fetch = match fetch_result {
+                    Ok(f) => f,
+                    Err(_) => {
+                        // Skip messages that fail to parse (often due to Unicode issues in headers)
+                        stats.skipped_count += 1;
+                        continue;
                     }
+                };
 
-                    // Parse to addresses
-                    if let Some(to_addrs) = &envelope.to {
-                        for addr in to_addrs {
-                            let address = addr.mailbox.as_ref().and_then(|m| {
-                                addr.host.as_ref().map(|h| {
-                                    format!(
-                                        "{}@{}",
-                                        String::from_utf8_lossy(m),
-                                        String::from_utf8_lossy(h)
-                                    )
-                                })
-                            });
-                            let name = addr
-                                .name
-                                .as_ref()
-                                .map(|n| String::from_utf8_lossy(n).to_string());
-                            if let Some(a) = address {
-                                message.to.push(EmailAddress::new(a, name));
-                            }
-                        }
-                    }
+                if let Some(uid) = fetch.uid {
+                    let mut message = Message::new(uid);
 
-                    // Parse date
-                    if let Some(date_bytes) = &envelope.date {
-                        let date_str = String::from_utf8_lossy(date_bytes);
-                        if let Ok(parsed_date) = DateTime::parse_from_rfc2822(&date_str) {
-                            message.date = Some(parsed_date.with_timezone(&Utc));
-                        }
-                    }
-                }
+                    // Parse flags
+                    let flags: Vec<_> = fetch.flags().collect();
+                    message.flags = MessageFlags::from_imap_flags(&flags);
 
-                // Parse body for preview (only if preview was requested)
-                if filter.preview {
-                    // RFC822 returns the full message, accessible via body()
-                    if let Some(full_msg_bytes) = fetch.body() {
-                        // Try to parse the email to extract text content
+                    // Get the raw bytes - either from body() for RFC822 or header() for BODY.PEEK[HEADER]
+                    let mail_bytes = fetch.body().or_else(|| fetch.header());
+
+                    // Parse using mail-parser (more robust Unicode handling than ENVELOPE)
+                    if let Some(bytes) = mail_bytes {
                         if let Some(parsed_mail) =
-                            mail_parser::MessageParser::default().parse(full_msg_bytes)
+                            mail_parser::MessageParser::default().parse(bytes)
                         {
-                            // Try to get plain text body first
-                            if let Some(body_text) = parsed_mail.body_text(0) {
-                                let preview: String = body_text.chars().take(200).collect();
-                                if !preview.trim().is_empty() {
-                                    message.preview = Some(preview.trim().to_string());
+                            message.subject = parsed_mail.subject().map(String::from);
+                            message.message_id = parsed_mail.message_id().map(String::from);
+
+                            // Parse from address
+                            if let Some(from_addr) =
+                                parsed_mail.from().and_then(|addrs| addrs.first())
+                            {
+                                if let Some(email) = from_addr.address() {
+                                    message.from = Some(EmailAddress::new(
+                                        email.to_string(),
+                                        from_addr.name().map(String::from),
+                                    ));
                                 }
                             }
-                            // If no text part, try HTML and strip tags
-                            else if let Some(body_html) = parsed_mail.body_html(0) {
-                                // Basic HTML stripping - just remove tags for preview
-                                let text = body_html.replace("<br>", "\n").replace("</p>", "\n");
-                                let preview: String = text
-                                    .split('<')
-                                    .map(|s| s.split_once('>').map(|(_, rest)| rest).unwrap_or(s))
-                                    .collect::<String>()
-                                    .chars()
-                                    .take(200)
-                                    .collect();
-                                if !preview.trim().is_empty() {
-                                    message.preview = Some(preview.trim().to_string());
+
+                            // Parse to addresses
+                            if let Some(to_addrs) = parsed_mail.to() {
+                                for addr in to_addrs.iter() {
+                                    if let Some(email) = addr.address() {
+                                        message.to.push(EmailAddress::new(
+                                            email.to_string(),
+                                            addr.name().map(String::from),
+                                        ));
+                                    }
+                                }
+                            }
+
+                            // Parse date
+                            if let Some(date) = parsed_mail.date() {
+                                message.date = Some(DateTime::from_timestamp(date.to_timestamp(), 0)
+                                    .unwrap_or_else(|| Utc::now()));
+                            }
+
+                            // Extract preview from body (only when we have full RFC822)
+                            if filter.preview {
+                                // Try to get plain text body first
+                                if let Some(body_text) = parsed_mail.body_text(0) {
+                                    let preview: String = body_text.chars().take(200).collect();
+                                    if !preview.trim().is_empty() {
+                                        message.preview = Some(preview.trim().to_string());
+                                    }
+                                }
+                                // If no text part, try HTML and strip tags
+                                else if let Some(body_html) = parsed_mail.body_html(0) {
+                                    // Basic HTML stripping - just remove tags for preview
+                                    let text =
+                                        body_html.replace("<br>", "\n").replace("</p>", "\n");
+                                    let preview: String = text
+                                        .split('<')
+                                        .map(|s| s.split_once('>').map(|(_, rest)| rest).unwrap_or(s))
+                                        .collect::<String>()
+                                        .chars()
+                                        .take(200)
+                                        .collect();
+                                    if !preview.trim().is_empty() {
+                                        message.preview = Some(preview.trim().to_string());
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
-                messages.push(message);
+                    messages.push(message);
+                }
             }
         }
 
-        if skipped_count > 0 {
+        stats.parsed_count = messages.len();
+
+        if stats.skipped_count > 0 {
             eprintln!(
                 "\nNote: Skipped {} message(s) due to parsing errors.",
-                skipped_count
+                stats.skipped_count
             );
+        }
+
+        // Warn if Bridge returned significantly fewer messages than requested
+        let expected = stats.fetch_count.saturating_sub(stats.skipped_count);
+        if stats.parsed_count < expected && expected > 0 {
+            let missing = expected - stats.parsed_count;
+            eprintln!(
+                "\nWarning: ProtonMail Bridge returned {} fewer message(s) than expected.",
+                missing
+            );
+            eprintln!("This is a known Bridge issue with large folders. Try using --days to filter by date.");
         }
 
         // Sort by UID descending (newest first) for deterministic ordering
         messages.sort_by(|a, b| b.uid.cmp(&a.uid));
 
-        Ok(messages)
+        Ok((messages, stats))
     }
 
     pub async fn fetch_message_by_uid(

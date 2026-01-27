@@ -330,17 +330,18 @@ impl StateManager {
         &self,
         account: &str,
         folder: &str,
-        entries: &[(u32, Option<&str>, Option<&str>)], // (uid, message_id, subject)
+        entries: &[(u32, Option<&str>, Option<&str>, Option<i64>)], // (uid, message_id, subject, shadow_uid)
     ) -> Result<usize> {
         let mut count = 0;
-        for (uid, message_id, subject) in entries {
+        for (uid, message_id, subject, shadow_uid) in entries {
             let result = sqlx::query(
                 r#"
-                INSERT INTO selections (account, folder, uid, message_id, subject)
-                VALUES (?1, ?2, ?3, ?4, ?5)
+                INSERT INTO selections (account, folder, uid, message_id, subject, shadow_uid)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                 ON CONFLICT(account, folder, uid) DO UPDATE SET
                     message_id = COALESCE(?4, message_id),
-                    subject = COALESCE(?5, subject)
+                    subject = COALESCE(?5, subject),
+                    shadow_uid = COALESCE(?6, shadow_uid)
                 "#,
             )
             .bind(account)
@@ -348,6 +349,7 @@ impl StateManager {
             .bind(*uid as i64)
             .bind(*message_id)
             .bind(*subject)
+            .bind(*shadow_uid)
             .execute(&self.pool)
             .await
             .context("Failed to add to selection")?;
@@ -439,7 +441,7 @@ impl StateManager {
         account: &str,
         folder: &str,
         query_string: &str,
-        results: &[(u32, Option<&str>, Option<&str>)], // (uid, message_id, subject)
+        results: &[(u32, Option<&str>, Option<&str>, Option<i64>)], // (uid, message_id, subject, shadow_uid)
     ) -> Result<()> {
         // Update or insert query history
         sqlx::query(
@@ -467,11 +469,11 @@ impl StateManager {
             .context("Failed to clear old query results")?;
 
         // Insert new results
-        for (uid, message_id, subject) in results {
+        for (uid, message_id, subject, shadow_uid) in results {
             sqlx::query(
                 r#"
-                INSERT INTO query_history_results (account, folder, uid, message_id, subject)
-                VALUES (?1, ?2, ?3, ?4, ?5)
+                INSERT INTO query_history_results (account, folder, uid, message_id, subject, shadow_uid)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                 "#,
             )
             .bind(account)
@@ -479,6 +481,7 @@ impl StateManager {
             .bind(*uid as i64)
             .bind(*message_id)
             .bind(*subject)
+            .bind(*shadow_uid)
             .execute(&self.pool)
             .await
             .context("Failed to save query result")?;

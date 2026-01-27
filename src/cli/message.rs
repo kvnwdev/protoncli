@@ -1,4 +1,4 @@
-use crate::core::imap::ImapClient;
+use crate::core::imap::{FetchStats, ImapClient};
 use crate::core::state::{validate_shadow_uids, StateManager};
 use crate::models::config::Config;
 use crate::models::filter::MessageFilter;
@@ -7,12 +7,38 @@ use crate::output::{json, markdown, table};
 use anyhow::{anyhow, Result};
 use serde::Serialize;
 
+/// Serializable stats for diagnostic output
+#[derive(Serialize)]
+struct DiagnosticStats {
+    /// Number of UIDs returned by IMAP search
+    search_count: usize,
+    /// Number of UIDs requested for fetch (after limit applied)
+    fetch_count: usize,
+    /// Number of messages successfully parsed
+    parsed_count: usize,
+    /// Number of messages that failed to parse
+    skipped_count: usize,
+}
+
+impl From<FetchStats> for DiagnosticStats {
+    fn from(stats: FetchStats) -> Self {
+        Self {
+            search_count: stats.search_count,
+            fetch_count: stats.fetch_count,
+            parsed_count: stats.parsed_count,
+            skipped_count: stats.skipped_count,
+        }
+    }
+}
+
 #[derive(Serialize)]
 struct InboxOutput {
     account: String,
     folder: String,
     count: usize,
     messages: Vec<Message>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stats: Option<DiagnosticStats>,
 }
 
 pub async fn list_inbox(
@@ -54,7 +80,7 @@ pub async fn list_inbox(
     // Connect and fetch messages
     let mut client = ImapClient::connect(account).await?;
     client.select_folder("INBOX").await?;
-    let mut messages = client.fetch_messages(&filter).await?;
+    let (mut messages, fetch_stats) = client.fetch_messages(&filter).await?;
 
     // Initialize state manager for shadow UID assignment
     let state = StateManager::new().await?;
@@ -102,11 +128,13 @@ pub async fn list_inbox(
 
     match output_format.unwrap_or("json") {
         "json" => {
+            // Include stats in JSON output for diagnostics
             let output = InboxOutput {
                 account: account.email.clone(),
                 folder: "INBOX".to_string(),
                 count: messages.len(),
                 messages,
+                stats: Some(fetch_stats.into()),
             };
             json::print_json(&output)?;
         }

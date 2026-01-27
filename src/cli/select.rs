@@ -46,8 +46,8 @@ pub async fn add_to_selection(ids: Vec<i64>, output_format: Option<&str>) -> Res
     let mut count = 0;
     for msg in &resolved {
         // Add the resolved message to selection with its shadow_uid
-        let entries: Vec<(u32, Option<&str>, Option<&str>)> =
-            vec![(msg.imap_uid, msg.message_id.as_deref(), None)];
+        let entries: Vec<(u32, Option<&str>, Option<&str>, Option<i64>)> =
+            vec![(msg.imap_uid, msg.message_id.as_deref(), None, Some(msg.shadow_uid))];
         count += state
             .add_to_selection(&account.email, &msg.folder, &entries)
             .await?;
@@ -86,10 +86,10 @@ pub async fn add_last_query_to_selection(folder: &str, output_format: Option<&st
         ));
     }
 
-    // Convert to entries
-    let entries: Vec<(u32, Option<&str>, Option<&str>)> = results
+    // Convert to entries with shadow_uid
+    let entries: Vec<(u32, Option<&str>, Option<&str>, Option<i64>)> = results
         .iter()
-        .map(|r| (r.uid as u32, r.message_id.as_deref(), r.subject.as_deref()))
+        .map(|r| (r.uid as u32, r.message_id.as_deref(), r.subject.as_deref(), r.shadow_uid))
         .collect();
 
     let count = state

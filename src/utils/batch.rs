@@ -1,7 +1,11 @@
 //! Batch processing utilities for handling large message selections
 
-/// Default batch size for IMAP operations
+/// Default batch size for IMAP operations (move/copy/delete)
 pub const DEFAULT_BATCH_SIZE: usize = 100;
+
+/// Batch size for IMAP FETCH operations
+/// Smaller batches help work around ProtonMail Bridge issues with large requests
+pub const FETCH_BATCH_SIZE: usize = 25;
 
 /// Split UIDs into chunks for batch processing
 pub fn chunk_uids(uids: &[u32], batch_size: usize) -> Vec<Vec<u32>> {

@@ -100,7 +100,7 @@ pub async fn execute_query(
     client.select_folder(&effective_folder).await?;
 
     // Fetch messages using the filter (IMAP does the filtering)
-    let mut messages = client.fetch_messages(&filter).await?;
+    let (mut messages, _stats) = client.fetch_messages(&filter).await?;
 
     // Initialize state manager for shadow UID assignment
     let state = StateManager::new().await?;
@@ -190,9 +190,16 @@ pub async fn execute_query(
         .collect();
 
     // Save query results for potential `select last`
-    let result_entries: Vec<(u32, Option<&str>, Option<&str>)> = messages
+    let result_entries: Vec<(u32, Option<&str>, Option<&str>, Option<i64>)> = messages
         .iter()
-        .map(|msg| (msg.uid, msg.message_id.as_deref(), msg.subject.as_deref()))
+        .map(|msg| {
+            (
+                msg.uid,
+                msg.message_id.as_deref(),
+                msg.subject.as_deref(),
+                msg.shadow_uid,
+            )
+        })
         .collect();
 
     state
