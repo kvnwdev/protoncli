@@ -139,7 +139,7 @@ impl ImapClient {
         let search_query = filter.build_imap_search_query()?;
         let uids_set = self
             .session
-            .search(&search_query)
+            .uid_search(&search_query)
             .await
             .context("Failed to search messages")?;
 

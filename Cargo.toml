@@ -1,6 +1,6 @@
 [package]
 name = "protoncli"
-version = "0.3.4"
+version = "0.3.5"
 edition = "2021"
 authors = ["Kevin Willoughby <kevinwilloughby@protonmail.com>"]
 description = "A production-ready CLI email client for ProtonMail Bridge"
