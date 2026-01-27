@@ -283,10 +283,9 @@ fn print_selection_table(output: &SelectionOutput) {
 
     // Header
     println!(
-        "{:>id_w$}  {:folder_w$}  {}",
+        "{:>id_w$}  {:folder_w$}  SUBJECT",
         "ID",
         "FOLDER",
-        "SUBJECT",
         id_w = id_width,
         folder_w = folder_width,
     );
