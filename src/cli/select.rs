@@ -42,19 +42,18 @@ pub async fn add_to_selection(ids: Vec<i64>, output_format: Option<&str>) -> Res
     // Resolve shadow UIDs to get their info
     let resolved = state.resolve_shadow_uids(&account.email, &ids).await?;
 
-    // Add to selection with shadow_uid info
+    // Add to selection with shadow_uid info (folder is per-entry since UIDs are folder-scoped)
     let mut count = 0;
     for msg in &resolved {
         // Add the resolved message to selection with its shadow_uid
         let entries: Vec<SelectionEntryTuple<'_>> = vec![(
             msg.imap_uid,
+            &msg.folder,
             msg.message_id.as_deref(),
             None,
             Some(msg.shadow_uid),
         )];
-        count += state
-            .add_to_selection(&account.email, &msg.folder, &entries)
-            .await?;
+        count += state.add_to_selection(&account.email, &entries).await?;
     }
 
     let output = SelectActionOutput {
@@ -90,12 +89,13 @@ pub async fn add_last_query_to_selection(folder: &str, output_format: Option<&st
         ));
     }
 
-    // Convert to entries with shadow_uid
+    // Convert to entries with shadow_uid (folder is per-entry since UIDs are folder-scoped)
     let entries: Vec<SelectionEntryTuple<'_>> = results
         .iter()
         .map(|r| {
             (
                 r.uid as u32,
+                r.folder.as_str(),
                 r.message_id.as_deref(),
                 r.subject.as_deref(),
                 r.shadow_uid,
@@ -103,9 +103,7 @@ pub async fn add_last_query_to_selection(folder: &str, output_format: Option<&st
         })
         .collect();
 
-    let count = state
-        .add_to_selection(&account.email, folder, &entries)
-        .await?;
+    let count = state.add_to_selection(&account.email, &entries).await?;
 
     let output = SelectActionOutput {
         action: "add_last".to_string(),

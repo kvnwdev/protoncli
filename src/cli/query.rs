@@ -227,16 +227,13 @@ pub async fn execute_query(
         })
         .collect();
 
-    // Save query results for potential `select last` - use first folder for compatibility
-    let primary_folder = effective_folders
-        .first()
-        .map(|s| s.as_str())
-        .unwrap_or("INBOX");
+    // Save query results with actual per-message folders (IMAP UIDs are folder-scoped)
     let result_entries: Vec<crate::core::state::SelectionEntryTuple<'_>> = all_messages
         .iter()
         .map(|msg| {
             (
                 msg.uid,
+                msg.folder.as_deref().unwrap_or("INBOX"),
                 msg.message_id.as_deref(),
                 msg.subject.as_deref(),
                 msg.shadow_uid,
@@ -245,13 +242,13 @@ pub async fn execute_query(
         .collect();
 
     state
-        .save_query_results(&account.email, primary_folder, query_str, &result_entries)
+        .save_query_results(&account.email, query_str, &result_entries)
         .await?;
 
     // Optionally add to selection
     let added_to_selection = if select {
         let count = state
-            .add_to_selection(&account.email, primary_folder, &result_entries)
+            .add_to_selection(&account.email, &result_entries)
             .await?;
         Some(count)
     } else {
