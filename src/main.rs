@@ -36,9 +36,9 @@ enum Commands {
     Query {
         /// Query expression (Gmail-style syntax)
         query: String,
-        /// Folder to search
-        #[arg(long, default_value = "INBOX")]
-        folder: String,
+        /// Folder(s) to search (can be specified multiple times)
+        #[arg(long, short = 'F')]
+        folder: Vec<String>,
         /// Comma-separated fields to display (uid,subject,from,date,flags,message_id)
         #[arg(long, short = 'f')]
         fields: Option<String>,

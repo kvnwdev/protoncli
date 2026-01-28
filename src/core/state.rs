@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 use sqlx::{migrate::MigrateDatabase, sqlite::SqlitePool, FromRow, Sqlite};
 use std::path::PathBuf;
 
+/// Type alias for selection/query entry tuple: (uid, folder, message_id, subject, shadow_uid)
+pub type SelectionEntryTuple<'a> = (u32, &'a str, Option<&'a str>, Option<&'a str>, Option<i64>);
+
 /// A message in the selection
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct SelectionEntry {
@@ -325,15 +328,14 @@ impl StateManager {
     // Selection methods
     // ============================================================
 
-    /// Add messages to the selection
+    /// Add messages to the selection (folder is per-entry since IMAP UIDs are folder-scoped)
     pub async fn add_to_selection(
         &self,
         account: &str,
-        folder: &str,
-        entries: &[(u32, Option<&str>, Option<&str>, Option<i64>)], // (uid, message_id, subject, shadow_uid)
+        entries: &[SelectionEntryTuple<'_>],
     ) -> Result<usize> {
         let mut count = 0;
-        for (uid, message_id, subject, shadow_uid) in entries {
+        for (uid, folder, message_id, subject, shadow_uid) in entries {
             let result = sqlx::query(
                 r#"
                 INSERT INTO selections (account, folder, uid, message_id, subject, shadow_uid)
@@ -345,7 +347,7 @@ impl StateManager {
                 "#,
             )
             .bind(account)
-            .bind(folder)
+            .bind(*folder)
             .bind(*uid as i64)
             .bind(*message_id)
             .bind(*subject)
@@ -435,41 +437,48 @@ impl StateManager {
     // Query history methods
     // ============================================================
 
-    /// Save query results (replaces previous results for account/folder)
+    /// Save query results (replaces previous results for the folders involved)
+    /// Each entry includes its folder since IMAP UIDs are folder-scoped.
     pub async fn save_query_results(
         &self,
         account: &str,
-        folder: &str,
         query_string: &str,
-        results: &[(u32, Option<&str>, Option<&str>, Option<i64>)], // (uid, message_id, subject, shadow_uid)
+        results: &[SelectionEntryTuple<'_>],
     ) -> Result<()> {
-        // Update or insert query history
-        sqlx::query(
-            r#"
-            INSERT INTO query_history (account, folder, query_string, executed_at)
-            VALUES (?1, ?2, ?3, CURRENT_TIMESTAMP)
-            ON CONFLICT(account, folder) DO UPDATE SET
-                query_string = ?3,
-                executed_at = CURRENT_TIMESTAMP
-            "#,
-        )
-        .bind(account)
-        .bind(folder)
-        .bind(query_string)
-        .execute(&self.pool)
-        .await
-        .context("Failed to save query history")?;
+        use std::collections::HashSet;
 
-        // Clear previous results for this account/folder
-        sqlx::query("DELETE FROM query_history_results WHERE account = ?1 AND folder = ?2")
+        // Collect unique folders from results
+        let folders: HashSet<&str> = results.iter().map(|(_, folder, _, _, _)| *folder).collect();
+
+        // Update query_history and clear old results for each folder
+        for folder in &folders {
+            sqlx::query(
+                r#"
+                INSERT INTO query_history (account, folder, query_string, executed_at)
+                VALUES (?1, ?2, ?3, CURRENT_TIMESTAMP)
+                ON CONFLICT(account, folder) DO UPDATE SET
+                    query_string = ?3,
+                    executed_at = CURRENT_TIMESTAMP
+                "#,
+            )
             .bind(account)
-            .bind(folder)
+            .bind(*folder)
+            .bind(query_string)
             .execute(&self.pool)
             .await
-            .context("Failed to clear old query results")?;
+            .context("Failed to save query history")?;
 
-        // Insert new results
-        for (uid, message_id, subject, shadow_uid) in results {
+            // Clear previous results for this account/folder
+            sqlx::query("DELETE FROM query_history_results WHERE account = ?1 AND folder = ?2")
+                .bind(account)
+                .bind(*folder)
+                .execute(&self.pool)
+                .await
+                .context("Failed to clear old query results")?;
+        }
+
+        // Insert new results with their actual folders
+        for (uid, folder, message_id, subject, shadow_uid) in results {
             sqlx::query(
                 r#"
                 INSERT INTO query_history_results (account, folder, uid, message_id, subject, shadow_uid)
@@ -477,7 +486,7 @@ impl StateManager {
                 "#,
             )
             .bind(account)
-            .bind(folder)
+            .bind(*folder)
             .bind(*uid as i64)
             .bind(*message_id)
             .bind(*subject)

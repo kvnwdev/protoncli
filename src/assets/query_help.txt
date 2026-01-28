@@ -34,9 +34,10 @@ The query language uses Gmail-style syntax to filter messages.
 
     **Relative formats:** 7d (days), 2w (weeks), 1m (months), 1y (years)
 
-  **Folder Shorthand:**
+  **Folder Selection:**
     `in:`Sent              Search in Sent folder
     `folder:`Archive        Search in Archive folder
+    `in:`Sent `in:`Archive   Search in multiple folders (deduplicated)
 
   **Size:**
     `size:>`BYTES           Messages larger than size
@@ -72,9 +73,26 @@ The query language uses Gmail-style syntax to filter messages.
   Large messages from specific domain:
     protoncli query "from:example.com ~AND~ size:>1000000"
 
+## MULTI-FOLDER QUERIES
+
+  Search across multiple folders with automatic deduplication:
+
+  **In-query syntax:**
+    protoncli query "from:alice `in:Sent` `in:Archive`"
+
+  **CLI flag syntax:**
+    protoncli query "from:alice" `-F` Sent `-F` Archive
+    protoncli query "from:alice" `--folder` Sent `--folder` Archive
+
+  - Duplicate messages (same message_id) are deduplicated
+  - First occurrence is kept (order: query folders, then CLI folders)
+  - Results are sorted by date (newest first)
+  - in:folder in query takes precedence over --folder flags
+
 ## COMBINING WITH FLAGS
 
     `--limit` N             Limit results to N messages
+    `--folder`/`-F` FOLDER  Folder(s) to search (can be repeated)
     `--output` FORMAT       Output format (json, markdown, text)
     `--preview`             Include body preview
     `--select`              Add results to selection
@@ -86,5 +104,7 @@ The query language uses Gmail-style syntax to filter messages.
 
   - Field names are case-insensitive (FROM: works same as from:)
   - Use quotes around values with spaces: subject:"project update"
-  - in:folder overrides the --folder flag
+  - in:folder in query takes precedence over --folder flags
+  - Multiple in:folder clauses search all specified folders
   - Date format: YYYY-MM-DD or relative (30d, 2w, 1m, 1y)
+  - JSON output uses `folders: []` (breaking change from single folder)

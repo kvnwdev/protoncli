@@ -148,7 +148,10 @@ impl ImapClient {
         Ok(())
     }
 
-    pub async fn fetch_messages(&mut self, filter: &MessageFilter) -> Result<(Vec<Message>, FetchStats)> {
+    pub async fn fetch_messages(
+        &mut self,
+        filter: &MessageFilter,
+    ) -> Result<(Vec<Message>, FetchStats)> {
         let mut stats = FetchStats::default();
 
         // Build and execute search query
@@ -256,8 +259,10 @@ impl ImapClient {
 
                             // Parse date
                             if let Some(date) = parsed_mail.date() {
-                                message.date = Some(DateTime::from_timestamp(date.to_timestamp(), 0)
-                                    .unwrap_or_else(|| Utc::now()));
+                                message.date = Some(
+                                    DateTime::from_timestamp(date.to_timestamp(), 0)
+                                        .unwrap_or_else(Utc::now),
+                                );
                             }
 
                             // Extract preview from body (only when we have full RFC822)
@@ -276,7 +281,9 @@ impl ImapClient {
                                         body_html.replace("<br>", "\n").replace("</p>", "\n");
                                     let preview: String = text
                                         .split('<')
-                                        .map(|s| s.split_once('>').map(|(_, rest)| rest).unwrap_or(s))
+                                        .map(|s| {
+                                            s.split_once('>').map(|(_, rest)| rest).unwrap_or(s)
+                                        })
                                         .collect::<String>()
                                         .chars()
                                         .take(200)
