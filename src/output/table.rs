@@ -2,12 +2,14 @@ use crate::models::message::Message;
 
 /// Truncate a string to fit within max_width, adding "..." if truncated
 fn truncate(s: &str, max_width: usize) -> String {
-    if s.len() <= max_width {
+    let char_count = s.chars().count();
+    if char_count <= max_width {
         s.to_string()
     } else if max_width <= 3 {
         s.chars().take(max_width).collect()
     } else {
-        format!("{}...", &s[..max_width - 3])
+        let truncated: String = s.chars().take(max_width - 3).collect();
+        format!("{}...", truncated)
     }
 }
 
@@ -174,6 +176,23 @@ mod tests {
     #[test]
     fn test_truncate_long_string() {
         assert_eq!(truncate("hello world", 8), "hello...");
+    }
+
+    #[test]
+    fn test_truncate_multibyte_utf8() {
+        // Should not panic with emojis and special characters
+        let subject = "Saturday Feast Mode: Complete Meal for 2 –Just $22! 🔥";
+        let result = truncate(subject, 45);
+        assert!(result.ends_with("..."));
+        assert!(result.chars().count() <= 45);
+
+        // Test with emoji at various positions
+        let emoji_start = "🔥 Hot deals today";
+        assert!(truncate(emoji_start, 10).chars().count() <= 10);
+
+        // Test with em-dash (3 bytes)
+        let em_dash = "Test – dash here";
+        assert!(truncate(em_dash, 8).chars().count() <= 8);
     }
 
     #[test]
