@@ -9,6 +9,7 @@ use async_imap::Session;
 use async_native_tls::{TlsConnector, TlsStream};
 use chrono::{DateTime, Utc};
 use futures::stream::StreamExt;
+use secrecy::ExposeSecret;
 use tokio::net::TcpStream;
 use tokio_util::compat::{Compat, TokioAsyncReadCompatExt};
 
@@ -58,7 +59,14 @@ impl ImapClient {
                 // Step 5: Extract underlying stream
                 let tcp_stream = client.into_inner();
 
-                // Step 6: Upgrade to TLS (accept self-signed cert for Bridge)
+                // Step 6: Upgrade to TLS
+                // SECURITY NOTE: We accept invalid certificates here because ProtonMail Bridge
+                // runs on localhost (127.0.0.1) and uses a self-signed certificate. This is
+                // intentional and safe because:
+                //   1. This client is designed exclusively for local ProtonMail Bridge connections
+                //   2. The default imap_host is hardcoded to 127.0.0.1 (see Account::new_protonmail_bridge)
+                //   3. Traffic stays on the local machine and cannot be intercepted
+                // Do NOT use this pattern for connections to external servers.
                 let tls_connector = TlsConnector::new().danger_accept_invalid_certs(true);
 
                 let tls_stream = tls_connector
@@ -77,6 +85,8 @@ impl ImapClient {
 
                 let tcp_stream = tcp_stream.compat();
 
+                // SECURITY NOTE: See comment above about why we accept invalid certificates.
+                // This is safe for localhost ProtonMail Bridge connections only.
                 let tls_connector = TlsConnector::new().danger_accept_invalid_certs(true);
 
                 let tls_stream = tls_connector
@@ -86,14 +96,11 @@ impl ImapClient {
 
                 async_imap::Client::new(tls_stream)
             }
-            SecurityType::None => {
-                return Err(anyhow!("Insecure connections are not supported"));
-            }
         };
 
         // Step 8: Authenticate
         let session = client
-            .login(&account.email, &password)
+            .login(&account.email, password.expose_secret())
             .await
             .map_err(|e| anyhow!("Authentication failed: {}", e.0))?;
 

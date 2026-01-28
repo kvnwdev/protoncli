@@ -1,11 +1,12 @@
 use serde::{Deserialize, Serialize};
 
+/// Security type for IMAP/SMTP connections.
+/// Note: Insecure (None) connections are intentionally not supported.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum SecurityType {
     StartTls,
     Ssl,
-    None,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

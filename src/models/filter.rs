@@ -112,8 +112,15 @@ impl MessageFilter {
         }
     }
 
+    /// Escape a string for safe use in IMAP commands.
+    /// Filters out control characters and null bytes, then escapes backslashes and quotes.
     fn escape_imap_string(s: &str) -> String {
-        s.replace('\\', "\\\\").replace('"', "\\\"")
+        s.chars()
+            // Filter out control characters (ASCII 0-31) and DEL (127), except space (32)
+            .filter(|c| !c.is_control() && *c != '\0')
+            .collect::<String>()
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
     }
 
     fn translate_field(&self, field: &str, operator: &Operator, value: &str) -> Result<String> {
@@ -404,6 +411,13 @@ mod tests {
             MessageFilter::escape_imap_string("test\\backslash"),
             "test\\\\backslash"
         );
+        // Test that control characters are filtered out
+        assert_eq!(
+            MessageFilter::escape_imap_string("test\r\nwith\nnewlines"),
+            "testwithnewlines"
+        );
+        assert_eq!(MessageFilter::escape_imap_string("test\0null"), "testnull");
+        assert_eq!(MessageFilter::escape_imap_string("tab\there"), "tabhere");
     }
 
     #[test]
