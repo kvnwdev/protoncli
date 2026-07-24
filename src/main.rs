@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(name = "protoncli")]
-#[command(version = "0.4.2")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(about = "A production-ready CLI email client for ProtonMail Bridge", long_about = None)]
 struct Cli {
     #[command(subcommand)]

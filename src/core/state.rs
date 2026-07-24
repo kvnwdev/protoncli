@@ -215,52 +215,75 @@ impl StateManager {
             .await
             .context("Failed to run migration 003")?;
 
-        // Run migration 004 - shadow UIDs (uses separate statements for ALTER TABLE)
-        let migration_004_applied: Option<(i32,)> =
-            sqlx::query_as("SELECT version FROM schema_migrations WHERE version = 4")
-                .fetch_optional(&pool)
-                .await
-                .context("Failed to check migration 004 status")?;
-
-        if migration_004_applied.is_none() {
-            // Add shadow_uid column to selections if it doesn't exist
-            let _ = sqlx::query(
-                "ALTER TABLE selections ADD COLUMN shadow_uid INTEGER REFERENCES messages(id)",
-            )
-            .execute(&pool)
-            .await;
-
-            // Add shadow_uid column to query_history_results if it doesn't exist
-            let _ = sqlx::query("ALTER TABLE query_history_results ADD COLUMN shadow_uid INTEGER REFERENCES messages(id)")
-                .execute(&pool)
-                .await;
-
-            // Create indexes
-            sqlx::query("CREATE INDEX IF NOT EXISTS idx_messages_id ON messages(id)")
-                .execute(&pool)
-                .await
-                .context("Failed to create idx_messages_id")?;
-
-            sqlx::query(
-                "CREATE INDEX IF NOT EXISTS idx_selections_shadow_uid ON selections(shadow_uid)",
-            )
-            .execute(&pool)
-            .await
-            .context("Failed to create idx_selections_shadow_uid")?;
-
-            sqlx::query("CREATE INDEX IF NOT EXISTS idx_query_history_results_shadow_uid ON query_history_results(shadow_uid)")
-                .execute(&pool)
-                .await
-                .context("Failed to create idx_query_history_results_shadow_uid")?;
-
-            // Mark migration as applied
-            sqlx::query("INSERT OR IGNORE INTO schema_migrations (version) VALUES (4)")
-                .execute(&pool)
-                .await
-                .context("Failed to mark migration 004 as applied")?;
-        }
+        Self::ensure_shadow_uid_schema(&pool).await?;
 
         Ok(Self { pool })
+    }
+
+    /// Repair and complete the shadow UID schema even if an earlier build
+    /// recorded migration 004 before all of its ALTER TABLE statements ran.
+    async fn ensure_shadow_uid_schema(pool: &SqlitePool) -> Result<()> {
+        Self::ensure_column(
+            pool,
+            "selections",
+            "shadow_uid",
+            "INTEGER REFERENCES messages(id)",
+        )
+        .await?;
+        Self::ensure_column(
+            pool,
+            "query_history_results",
+            "shadow_uid",
+            "INTEGER REFERENCES messages(id)",
+        )
+        .await?;
+
+        for (index, table) in [
+            ("idx_messages_id", "messages(id)"),
+            ("idx_selections_shadow_uid", "selections(shadow_uid)"),
+            (
+                "idx_query_history_results_shadow_uid",
+                "query_history_results(shadow_uid)",
+            ),
+        ] {
+            sqlx::query(&format!("CREATE INDEX IF NOT EXISTS {index} ON {table}"))
+                .execute(pool)
+                .await
+                .with_context(|| format!("Failed to create {index}"))?;
+        }
+
+        sqlx::query("INSERT OR IGNORE INTO schema_migrations (version) VALUES (4)")
+            .execute(pool)
+            .await
+            .context("Failed to mark migration 004 as applied")?;
+
+        Ok(())
+    }
+
+    async fn ensure_column(
+        pool: &SqlitePool,
+        table: &str,
+        column: &str,
+        definition: &str,
+    ) -> Result<()> {
+        let columns: Vec<(String,)> =
+            sqlx::query_as(&format!("SELECT name FROM pragma_table_info('{table}')"))
+                .fetch_all(pool)
+                .await
+                .with_context(|| format!("Failed to inspect {table} schema"))?;
+
+        if columns.iter().any(|(name,)| name == column) {
+            return Ok(());
+        }
+
+        sqlx::query(&format!(
+            "ALTER TABLE {table} ADD COLUMN {column} {definition}"
+        ))
+        .execute(pool)
+        .await
+        .with_context(|| format!("Failed to add {table}.{column}"))?;
+
+        Ok(())
     }
 
     /// Check if the database has the old schema (folder/uid unique) that needs migration
@@ -775,5 +798,45 @@ impl StateManager {
         .context("Failed to update message location by message_id")?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StateManager;
+    use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
+
+    async fn column_exists(pool: &SqlitePool, table: &str, column: &str) -> bool {
+        let columns: Vec<(String,)> =
+            sqlx::query_as(&format!("SELECT name FROM pragma_table_info('{table}')"))
+                .fetch_all(pool)
+                .await
+                .unwrap();
+        columns.iter().any(|(name,)| name == column)
+    }
+
+    #[tokio::test]
+    async fn shadow_uid_repair_completes_partially_migrated_schema() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+
+        for statement in [
+            "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY)",
+            "CREATE TABLE messages (id INTEGER PRIMARY KEY)",
+            "CREATE TABLE selections (id INTEGER PRIMARY KEY)",
+            "CREATE TABLE query_history_results (id INTEGER PRIMARY KEY)",
+            "INSERT INTO schema_migrations (version) VALUES (4)",
+        ] {
+            sqlx::query(statement).execute(&pool).await.unwrap();
+        }
+
+        StateManager::ensure_shadow_uid_schema(&pool).await.unwrap();
+        StateManager::ensure_shadow_uid_schema(&pool).await.unwrap();
+
+        assert!(column_exists(&pool, "selections", "shadow_uid").await);
+        assert!(column_exists(&pool, "query_history_results", "shadow_uid").await);
     }
 }
