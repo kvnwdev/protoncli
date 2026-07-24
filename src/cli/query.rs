@@ -2,6 +2,7 @@ use crate::core::imap::ImapClient;
 use crate::core::state::StateManager;
 use crate::models::config::Config;
 use crate::models::filter::MessageFilter;
+use crate::models::folder::resolve_folder_reference;
 use crate::output::{json, table};
 use anyhow::{anyhow, Result};
 use serde::Serialize;
@@ -98,7 +99,7 @@ pub async fn execute_query(
     // 2. CLI folders (--folder flags) if no in-query folders
     // 3. Default to INBOX if neither specified
     let query_folders = MessageFilter::extract_folders_from_query(query_str);
-    let effective_folders: Vec<String> = if !query_folders.is_empty() {
+    let requested_folders: Vec<String> = if !query_folders.is_empty() {
         query_folders
     } else if !cli_folders.is_empty() {
         cli_folders.to_vec()
@@ -108,6 +109,17 @@ pub async fn execute_query(
 
     // Connect to IMAP
     let mut client = ImapClient::connect(account).await?;
+
+    // Convert the names that Proton Mail shows in its UI to canonical IMAP paths.
+    // This also verifies every requested folder before fetching any messages.
+    let available_folders = client.list_folders().await?;
+    let effective_folders: Vec<String> = requested_folders
+        .iter()
+        .map(|folder| {
+            resolve_folder_reference(folder, &available_folders)
+                .ok_or_else(|| anyhow!("Folder '{folder}' does not exist"))
+        })
+        .collect::<Result<Vec<_>>>()?;
 
     // Initialize state manager for shadow UID assignment
     let state = StateManager::new().await?;

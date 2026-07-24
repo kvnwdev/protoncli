@@ -73,9 +73,20 @@ protoncli send --to user@example.com --attach doc.pdf --attach image.jpg
 
 ```bash
 protoncli folders                        # list folders
+protoncli folders status Professional    # IMAP message count and unread count
+protoncli folders messages Professional --limit 20
+protoncli folders messages Professional --query "from:github.com"
+protoncli query "newer:7d" --folder Professional
 protoncli account list                   # list accounts
 protoncli account set-default user@...   # set default account
 ```
+
+Folder commands accept the names shown in Proton Mail and canonical IMAP paths.
+For example, `Professional` resolves to `Folders/Professional`.
+Use a full path for nested folders, such as `Folders/Professional/GitHub`.
+
+`folders status` returns IMAP message counts. Proton Mail can show conversation
+counts in its desktop UI, so its unread number can differ from the CLI count.
 
 ## Query language
 

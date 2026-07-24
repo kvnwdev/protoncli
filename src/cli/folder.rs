@@ -1,5 +1,5 @@
 use crate::core::imap::ImapClient;
-use crate::models::config::Config;
+use crate::models::{config::Config, folder::resolve_folder_reference};
 use crate::output::json;
 use anyhow::{anyhow, Result};
 use serde::Serialize;
@@ -25,6 +25,14 @@ struct FolderRenameOutput {
     from: String,
     to: String,
     message: String,
+}
+
+fn custom_folder_path(name: &str) -> String {
+    if name.starts_with("Folders/") {
+        name.to_string()
+    } else {
+        format!("Folders/{name}")
+    }
 }
 
 pub async fn list_folders(output_format: Option<&str>) -> Result<()> {
@@ -59,8 +67,7 @@ pub async fn create_folder(name: &str, output_format: Option<&str>) -> Result<()
         .get_default_account()
         .ok_or_else(|| anyhow!("No default account configured. Please add an account first."))?;
 
-    // Prepend "Folders/" prefix for ProtonMail custom folders
-    let folder_path = format!("Folders/{}", name);
+    let folder_path = custom_folder_path(name);
 
     let mut client = ImapClient::connect(account).await?;
 
@@ -95,8 +102,7 @@ pub async fn delete_folder(name: &str, output_format: Option<&str>) -> Result<()
         .get_default_account()
         .ok_or_else(|| anyhow!("No default account configured. Please add an account first."))?;
 
-    // Prepend "Folders/" prefix for ProtonMail custom folders
-    let folder_path = format!("Folders/{}", name);
+    let folder_path = custom_folder_path(name);
 
     let mut client = ImapClient::connect(account).await?;
 
@@ -131,9 +137,8 @@ pub async fn rename_folder(from: &str, to: &str, output_format: Option<&str>) ->
         .get_default_account()
         .ok_or_else(|| anyhow!("No default account configured. Please add an account first."))?;
 
-    // Prepend "Folders/" prefix for ProtonMail custom folders
-    let from_path = format!("Folders/{}", from);
-    let to_path = format!("Folders/{}", to);
+    let from_path = custom_folder_path(from);
+    let to_path = custom_folder_path(to);
 
     let mut client = ImapClient::connect(account).await?;
 
@@ -162,6 +167,26 @@ pub async fn rename_folder(from: &str, to: &str, output_format: Option<&str>) ->
         _ => {
             return Err(anyhow!("Unsupported output format"));
         }
+    }
+
+    Ok(())
+}
+
+pub async fn folder_status(name: &str, output_format: Option<&str>) -> Result<()> {
+    let config = Config::load()?;
+    let account = config
+        .get_default_account()
+        .ok_or_else(|| anyhow!("No default account configured. Please add an account first."))?;
+
+    let mut client = ImapClient::connect(account).await?;
+    let folders = client.list_folders().await?;
+    let folder_path = resolve_folder_reference(name, &folders)
+        .ok_or_else(|| anyhow!("Folder '{name}' does not exist"))?;
+    let status = client.folder_status(&folder_path).await?;
+
+    match output_format.unwrap_or("json") {
+        "json" => json::print_json(&status)?,
+        _ => return Err(anyhow!("Unsupported output format")),
     }
 
     Ok(())

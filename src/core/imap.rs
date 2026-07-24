@@ -1,7 +1,7 @@
 use crate::core::auth::KeychainManager;
 use crate::models::account::{Account, SecurityType};
 use crate::models::filter::MessageFilter;
-use crate::models::folder::Folder;
+use crate::models::folder::{Folder, FolderStatus};
 use crate::models::message::{EmailAddress, Message, MessageFlags};
 use crate::utils::batch::{chunk_uids, FETCH_BATCH_SIZE};
 use anyhow::{anyhow, Context, Result};
@@ -153,6 +153,23 @@ impl ImapClient {
             .context(format!("Failed to select folder: {}", folder))?;
 
         Ok(())
+    }
+
+    /// Get mailbox state without selecting the folder or changing message flags.
+    pub async fn folder_status(&mut self, folder: &str) -> Result<FolderStatus> {
+        let mailbox = self
+            .session
+            .status(folder, "(MESSAGES UNSEEN UIDNEXT UIDVALIDITY)")
+            .await
+            .with_context(|| format!("Failed to get status for folder: {folder}"))?;
+
+        Ok(FolderStatus {
+            path: folder.to_string(),
+            messages: mailbox.exists,
+            unseen: mailbox.unseen,
+            uid_next: mailbox.uid_next,
+            uid_validity: mailbox.uid_validity,
+        })
     }
 
     pub async fn fetch_messages(

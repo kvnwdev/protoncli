@@ -378,6 +378,31 @@ enum FolderAction {
         #[arg(long, short)]
         output: Option<String>,
     },
+    /// Show message counts and sync identifiers for one folder
+    Status {
+        /// Folder name from Proton Mail or its IMAP path
+        name: String,
+        /// Output format (json)
+        #[arg(long, short)]
+        output: Option<String>,
+    },
+    /// List messages from one folder
+    Messages {
+        /// Folder name from Proton Mail or its IMAP path
+        name: String,
+        /// Gmail-style query expression
+        #[arg(long, short = 'q', default_value = "")]
+        query: String,
+        /// Limit number of messages
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Include body previews
+        #[arg(long)]
+        preview: bool,
+        /// Output format (json, markdown, text, or table)
+        #[arg(long, short)]
+        output: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -443,6 +468,27 @@ async fn main() -> anyhow::Result<()> {
             }
             Some(FolderAction::Rename { from, to, output }) => {
                 cli::folder::rename_folder(&from, &to, output.as_deref()).await?
+            }
+            Some(FolderAction::Status { name, output }) => {
+                cli::folder::folder_status(&name, output.as_deref()).await?
+            }
+            Some(FolderAction::Messages {
+                name,
+                query,
+                limit,
+                preview,
+                output,
+            }) => {
+                cli::query::execute_query(
+                    &query,
+                    &[name],
+                    None,
+                    limit,
+                    preview,
+                    false,
+                    output.as_deref(),
+                )
+                .await?
             }
         },
         Commands::Labels { action } => match action {
