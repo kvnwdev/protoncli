@@ -157,6 +157,7 @@ pub async fn read_message(
     folder_override: Option<&str>,
     output_format: Option<&str>,
     mark_read: bool,
+    mark_agent_read: bool,
     show_raw: bool,
 ) -> Result<()> {
     // Validate shadow UID
@@ -197,9 +198,11 @@ pub async fn read_message(
             .await?;
     }
 
-    // Always mark as agent-read in local state (using message_id as stable identifier)
-    if let Some(ref msg_id) = message.message_id {
-        state.mark_agent_read(&account.email, msg_id).await?;
+    // Local agent-read state is opt-in. Reading mail must not silently change it.
+    if mark_agent_read {
+        if let Some(ref msg_id) = message.message_id {
+            state.mark_agent_read(&account.email, msg_id).await?;
+        }
     }
 
     // Output based on format

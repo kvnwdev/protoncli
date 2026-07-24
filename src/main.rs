@@ -102,6 +102,9 @@ enum Commands {
         /// Mark message as read in IMAP
         #[arg(long)]
         mark_read: bool,
+        /// Mark this message as read in Proton CLI's local agent state
+        #[arg(long)]
+        mark_agent_read: bool,
         /// Show raw RFC822 message
         #[arg(long)]
         raw: bool,
@@ -148,6 +151,9 @@ enum Commands {
         /// Stage action as draft without executing
         #[arg(long)]
         draft: bool,
+        /// Required to execute operations affecting more than 50 messages
+        #[arg(long)]
+        execute: bool,
         /// Preserve selection after action (default: clear)
         #[arg(long)]
         keep: bool,
@@ -168,6 +174,9 @@ enum Commands {
         /// Stage action as draft without executing
         #[arg(long)]
         draft: bool,
+        /// Required to execute operations affecting more than 50 messages
+        #[arg(long)]
+        execute: bool,
         /// Preserve selection after action (default: clear)
         #[arg(long)]
         keep: bool,
@@ -191,6 +200,9 @@ enum Commands {
         /// Stage action as draft without executing
         #[arg(long)]
         draft: bool,
+        /// Required to execute operations affecting more than 50 messages
+        #[arg(long)]
+        execute: bool,
         /// Preserve selection after action (default: clear)
         #[arg(long)]
         keep: bool,
@@ -208,6 +220,9 @@ enum Commands {
         /// Stage action as draft without executing
         #[arg(long)]
         draft: bool,
+        /// Required to execute operations affecting more than 50 messages
+        #[arg(long)]
+        execute: bool,
         /// Preserve selection after action (default: clear)
         #[arg(long)]
         keep: bool,
@@ -246,6 +261,9 @@ enum Commands {
         /// Stage action as draft without executing
         #[arg(long)]
         draft: bool,
+        /// Required to execute operations affecting more than 50 messages
+        #[arg(long)]
+        execute: bool,
         /// Preserve selection after action (default: clear)
         #[arg(long)]
         keep: bool,
@@ -575,9 +593,18 @@ async fn main() -> anyhow::Result<()> {
             folder,
             output,
             mark_read,
+            mark_agent_read,
             raw,
         } => {
-            cli::message::read_message(id, folder.as_deref(), Some(&output), mark_read, raw).await?
+            cli::message::read_message(
+                id,
+                folder.as_deref(),
+                Some(&output),
+                mark_read,
+                mark_agent_read,
+                raw,
+            )
+            .await?
         }
         Commands::Send {
             from,
@@ -595,20 +622,40 @@ async fn main() -> anyhow::Result<()> {
             to,
             selection,
             draft,
+            execute,
             keep,
             output,
         } => {
-            cli::actions::move_messages(ids, &to, selection, draft, keep, output.as_deref()).await?
+            cli::actions::move_messages(
+                ids,
+                &to,
+                selection,
+                draft,
+                execute,
+                keep,
+                output.as_deref(),
+            )
+            .await?
         }
         Commands::Copy {
             ids,
             to,
             selection,
             draft,
+            execute,
             keep,
             output,
         } => {
-            cli::actions::copy_messages(ids, &to, selection, draft, keep, output.as_deref()).await?
+            cli::actions::copy_messages(
+                ids,
+                &to,
+                selection,
+                draft,
+                execute,
+                keep,
+                output.as_deref(),
+            )
+            .await?
         }
         Commands::Delete {
             ids,
@@ -616,6 +663,7 @@ async fn main() -> anyhow::Result<()> {
             yes,
             selection,
             draft,
+            execute,
             keep,
             output,
         } => {
@@ -625,6 +673,7 @@ async fn main() -> anyhow::Result<()> {
                 yes,
                 selection,
                 draft,
+                execute,
                 keep,
                 output.as_deref(),
             )
@@ -634,9 +683,13 @@ async fn main() -> anyhow::Result<()> {
             ids,
             selection,
             draft,
+            execute,
             keep,
             output,
-        } => cli::actions::archive_messages(ids, selection, draft, keep, output.as_deref()).await?,
+        } => {
+            cli::actions::archive_messages(ids, selection, draft, execute, keep, output.as_deref())
+                .await?
+        }
         Commands::Flag {
             ids,
             read,
@@ -648,6 +701,7 @@ async fn main() -> anyhow::Result<()> {
             move_to,
             selection,
             draft,
+            execute,
             keep,
             output,
         } => {
@@ -662,6 +716,7 @@ async fn main() -> anyhow::Result<()> {
                 move_to,
                 selection,
                 draft,
+                execute,
                 keep,
                 output.as_deref(),
             )

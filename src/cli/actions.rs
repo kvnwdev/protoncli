@@ -8,6 +8,59 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::io::{self, Write};
 
+const BULK_EXECUTE_THRESHOLD: usize = 50;
+
+fn require_bulk_execute(count: usize, create_draft: bool, execute: bool) -> Result<()> {
+    if !create_draft && count > BULK_EXECUTE_THRESHOLD && !execute {
+        return Err(anyhow!(
+            "This operation affects {count} messages. Review it with --draft, or pass --execute to confirm execution."
+        ));
+    }
+    Ok(())
+}
+
+/// Copy one message, verify the destination by Message-ID, then delete only
+/// the verified source. If a prior run copied the message before stopping, the
+/// destination check lets a rerun finish the source deletion without copying
+/// a duplicate.
+async fn move_verified_message(
+    client: &mut ImapClient,
+    source_folder: &str,
+    message: &ResolvedMessage,
+    destination: &str,
+) -> Result<()> {
+    let message_id = message.message_id.as_deref().ok_or_else(|| {
+        anyhow!(
+            "Message {} has no Message-ID; refuse to move it without a stable verification key.",
+            message.shadow_uid
+        )
+    })?;
+
+    if !client
+        .folder_has_message_id(destination, message_id)
+        .await?
+    {
+        client.select_folder(source_folder).await?;
+        client
+            .copy_messages(&[message.imap_uid], destination)
+            .await?;
+        if !client
+            .folder_has_message_id(destination, message_id)
+            .await?
+        {
+            return Err(anyhow!(
+                "Copy verification failed for message {}. The source was not changed.",
+                message.shadow_uid
+            ));
+        }
+    }
+
+    client.select_folder(source_folder).await?;
+    client.mark_messages_deleted(&[message.imap_uid]).await?;
+    client.expunge().await?;
+    Ok(())
+}
+
 #[derive(Serialize)]
 pub struct ActionOutput {
     pub action: String,
@@ -46,7 +99,7 @@ async fn resolve_shadow_uids_by_folder(
     account_email: &str,
     state: &StateManager,
 ) -> Result<(Vec<i64>, HashMap<String, Vec<ResolvedMessage>>)> {
-    let shadow_uids = if use_selection {
+    let (shadow_uids, resolved) = if use_selection {
         // Get shadow UIDs from selection
         let selection = state.get_selection(account_email).await?;
         if selection.is_empty() {
@@ -55,30 +108,29 @@ async fn resolve_shadow_uids_by_folder(
             ));
         }
         // Get shadow UIDs from selection entries
-        let mut uids = Vec::new();
-        for entry in selection {
-            if let Some(shadow_uid) = entry.shadow_uid {
-                uids.push(shadow_uid);
-            }
-        }
+        let uids: Vec<i64> = selection
+            .iter()
+            .filter_map(|entry| entry.shadow_uid)
+            .collect();
         if uids.is_empty() {
             return Err(anyhow!(
                 "Selection contains no messages with shadow UIDs. Please re-run 'inbox' or 'query' to assign IDs."
             ));
         }
-        uids
+        let resolved = state
+            .resolve_selection_entries(account_email, &selection)
+            .await?;
+        (uids, resolved)
     } else if !provided_ids.is_empty() {
-        provided_ids
+        let resolved = state
+            .resolve_shadow_uids(account_email, &provided_ids)
+            .await?;
+        (provided_ids, resolved)
     } else {
         return Err(anyhow!(
             "No message IDs provided. Either provide IDs directly or use --selection flag."
         ));
     };
-
-    // Resolve all shadow UIDs to their current locations
-    let resolved = state
-        .resolve_shadow_uids(account_email, &shadow_uids)
-        .await?;
 
     // Group by folder
     let mut by_folder: HashMap<String, Vec<ResolvedMessage>> = HashMap::new();
@@ -109,6 +161,7 @@ pub async fn move_messages(
     to: &str,
     use_selection: bool,
     create_draft: bool,
+    execute: bool,
     keep_selection: bool,
     output_format: Option<&str>,
 ) -> Result<()> {
@@ -123,6 +176,7 @@ pub async fn move_messages(
     // Resolve shadow UIDs to current locations
     let (shadow_uids, by_folder) =
         resolve_shadow_uids_by_folder(ids, use_selection, &account.email, &state).await?;
+    require_bulk_execute(shadow_uids.len(), create_draft, execute)?;
 
     // If draft mode, save draft and return
     if create_draft {
@@ -175,27 +229,15 @@ pub async fn move_messages(
     // Process each source folder
     let mut moved_count = 0;
     for (folder, messages) in &by_folder {
-        client.select_folder(folder).await?;
-
-        let imap_uids: Vec<u32> = messages.iter().map(|m| m.imap_uid).collect();
-        for chunk in chunk_uids(&imap_uids, DEFAULT_BATCH_SIZE) {
-            client.move_messages(&chunk, &dest_folder).await?;
+        for message in messages {
+            move_verified_message(&mut client, folder, message, &dest_folder).await?;
         }
 
-        // Update message locations in database
-        // After move, we need to find the new UIDs. For now, we mark location as dest_folder
-        // with UID 0 (will be resolved on next fetch)
+        // Remove only the source location. A later query records the destination UID.
         for msg in messages {
             if let Some(ref msg_id) = msg.message_id {
-                // Try to find the new UID by searching in dest folder
-                // For simplicity, just update the folder - UID will be resolved on next access
                 state
-                    .update_message_location_by_message_id(
-                        &account.email,
-                        msg_id,
-                        &dest_folder,
-                        0, // UID will be resolved on next access
-                    )
+                    .remove_message_location(&account.email, msg_id, folder, msg.imap_uid)
                     .await?;
             }
         }
@@ -236,6 +278,7 @@ pub async fn copy_messages(
     to: &str,
     use_selection: bool,
     create_draft: bool,
+    execute: bool,
     keep_selection: bool,
     output_format: Option<&str>,
 ) -> Result<()> {
@@ -250,6 +293,7 @@ pub async fn copy_messages(
     // Resolve shadow UIDs to current locations
     let (shadow_uids, by_folder) =
         resolve_shadow_uids_by_folder(ids, use_selection, &account.email, &state).await?;
+    require_bulk_execute(shadow_uids.len(), create_draft, execute)?;
 
     // If draft mode, save draft and return
     if create_draft {
@@ -346,6 +390,7 @@ pub async fn delete_messages(
     yes: bool,
     use_selection: bool,
     create_draft: bool,
+    execute: bool,
     keep_selection: bool,
     output_format: Option<&str>,
 ) -> Result<()> {
@@ -359,6 +404,7 @@ pub async fn delete_messages(
     // Resolve shadow UIDs to current locations
     let (shadow_uids, by_folder) =
         resolve_shadow_uids_by_folder(ids, use_selection, &account.email, &state).await?;
+    require_bulk_execute(shadow_uids.len(), create_draft, execute)?;
 
     // If draft mode, save draft and return
     if create_draft {
@@ -440,20 +486,15 @@ pub async fn delete_messages(
             if !client.folder_exists(&trash_folder).await? {
                 return Err(anyhow!("Trash folder not found"));
             }
-            for chunk in chunk_uids(&imap_uids, DEFAULT_BATCH_SIZE) {
-                client.move_messages(&chunk, &trash_folder).await?;
+            for message in messages {
+                move_verified_message(&mut client, folder, message, &trash_folder).await?;
             }
 
-            // Update message locations
+            // Remove only the source location. A later query records the destination UID.
             for msg in messages {
                 if let Some(ref msg_id) = msg.message_id {
                     state
-                        .update_message_location_by_message_id(
-                            &account.email,
-                            msg_id,
-                            &trash_folder,
-                            0,
-                        )
+                        .remove_message_location(&account.email, msg_id, folder, msg.imap_uid)
                         .await?;
                 }
             }
@@ -504,6 +545,7 @@ pub async fn archive_messages(
     ids: Vec<i64>,
     use_selection: bool,
     create_draft: bool,
+    execute: bool,
     keep_selection: bool,
     output_format: Option<&str>,
 ) -> Result<()> {
@@ -518,6 +560,7 @@ pub async fn archive_messages(
     // Resolve shadow UIDs to current locations
     let (shadow_uids, by_folder) =
         resolve_shadow_uids_by_folder(ids, use_selection, &account.email, &state).await?;
+    require_bulk_execute(shadow_uids.len(), create_draft, execute)?;
 
     // If draft mode, save draft and return
     if create_draft {
@@ -564,18 +607,15 @@ pub async fn archive_messages(
     // Process each source folder
     let mut archived_count = 0;
     for (folder, messages) in &by_folder {
-        client.select_folder(folder).await?;
-
-        let imap_uids: Vec<u32> = messages.iter().map(|m| m.imap_uid).collect();
-        for chunk in chunk_uids(&imap_uids, DEFAULT_BATCH_SIZE) {
-            client.move_messages(&chunk, &dest_folder).await?;
+        for message in messages {
+            move_verified_message(&mut client, folder, message, &dest_folder).await?;
         }
 
-        // Update message locations
+        // Remove only the source location. A later query records the destination UID.
         for msg in messages {
             if let Some(ref msg_id) = msg.message_id {
                 state
-                    .update_message_location_by_message_id(&account.email, msg_id, &dest_folder, 0)
+                    .remove_message_location(&account.email, msg_id, folder, msg.imap_uid)
                     .await?;
             }
         }
@@ -623,6 +663,7 @@ pub async fn modify_flags(
     move_to: Option<String>,
     use_selection: bool,
     create_draft: bool,
+    execute: bool,
     keep_selection: bool,
     output_format: Option<&str>,
 ) -> Result<()> {
@@ -665,6 +706,7 @@ pub async fn modify_flags(
     // Resolve shadow UIDs to current locations
     let (shadow_uids, by_folder) =
         resolve_shadow_uids_by_folder(ids, use_selection, &account.email, &state).await?;
+    require_bulk_execute(shadow_uids.len(), create_draft, execute)?;
 
     // Require at least one action
     if !flag_params.has_any_action() {
@@ -806,20 +848,15 @@ pub async fn modify_flags(
                     dest_resolved
                 ));
             }
-            for chunk in chunk_uids(&imap_uids, DEFAULT_BATCH_SIZE) {
-                client.move_messages(&chunk, &dest_resolved).await?;
+            for message in messages {
+                move_verified_message(&mut client, folder, message, &dest_resolved).await?;
             }
 
-            // Update message locations
+            // Remove only the source location. A later query records the destination UID.
             for msg in messages {
                 if let Some(ref msg_id) = msg.message_id {
                     state
-                        .update_message_location_by_message_id(
-                            &account.email,
-                            msg_id,
-                            &dest_resolved,
-                            0,
-                        )
+                        .remove_message_location(&account.email, msg_id, folder, msg.imap_uid)
                         .await?;
                 }
             }
@@ -914,5 +951,17 @@ mod tests {
         assert_eq!(resolve_folder_path("MyFolder"), "MyFolder");
         assert_eq!(resolve_folder_path("myfolder"), "myfolder");
         assert_eq!(resolve_folder_path("MYFOLDER"), "MYFOLDER");
+    }
+
+    #[test]
+    fn bulk_actions_require_explicit_execution() {
+        assert!(require_bulk_execute(50, false, false).is_ok());
+        assert!(require_bulk_execute(51, false, false).is_err());
+        assert!(require_bulk_execute(51, false, true).is_ok());
+    }
+
+    #[test]
+    fn bulk_drafts_do_not_require_execution() {
+        assert!(require_bulk_execute(500, true, false).is_ok());
     }
 }

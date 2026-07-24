@@ -48,6 +48,12 @@ pub struct MessageRecord {
     pub agent_read: bool,
 }
 
+#[derive(Debug, Clone, FromRow)]
+struct MessageLocation {
+    folder: String,
+    uid: i64,
+}
+
 /// Resolved message location for operations
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // shadow_uid included for debugging/logging purposes
@@ -185,17 +191,6 @@ impl StateManager {
             .await
             .context("Failed to connect to database")?;
 
-        // Check if we need to migrate from old schema
-        let needs_migration = Self::check_needs_schema_migration(&pool).await?;
-
-        if needs_migration {
-            // Drop old tables and let the new schema be created
-            sqlx::query("DROP TABLE IF EXISTS messages")
-                .execute(&pool)
-                .await
-                .context("Failed to drop old messages table")?;
-        }
-
         // Run migrations
         let migration_001 = include_str!("../../migrations/001_initial_schema.sql");
         sqlx::query(migration_001)
@@ -215,7 +210,9 @@ impl StateManager {
             .await
             .context("Failed to run migration 003")?;
 
+        Self::ensure_message_schema(&pool).await?;
         Self::ensure_shadow_uid_schema(&pool).await?;
+        Self::ensure_location_schema(&pool).await?;
 
         Ok(Self { pool })
     }
@@ -260,6 +257,60 @@ impl StateManager {
         Ok(())
     }
 
+    /// Keep old local state intact. Older builds can have a messages table that
+    /// lacks modern metadata columns, but it must never be dropped on startup.
+    async fn ensure_message_schema(pool: &SqlitePool) -> Result<()> {
+        for (column, definition) in [
+            ("message_id", "TEXT"),
+            ("folder", "TEXT"),
+            ("uid", "INTEGER"),
+            ("subject", "TEXT"),
+            ("from_address", "TEXT"),
+            ("date_sent", "TIMESTAMP"),
+            ("agent_read", "BOOLEAN DEFAULT FALSE"),
+        ] {
+            Self::ensure_column(pool, "messages", column, definition).await?;
+        }
+        Ok(())
+    }
+
+    async fn ensure_location_schema(pool: &SqlitePool) -> Result<()> {
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS message_locations (
+                message_shadow_uid INTEGER NOT NULL REFERENCES messages(id),
+                folder TEXT NOT NULL,
+                uid INTEGER NOT NULL,
+                PRIMARY KEY (message_shadow_uid, folder, uid)
+            )
+            "#,
+        )
+        .execute(pool)
+        .await
+        .context("Failed to create message location table")?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_message_locations_folder ON message_locations(folder, uid)",
+        )
+        .execute(pool)
+        .await
+        .context("Failed to index message locations")?;
+        sqlx::query(
+            r#"
+            INSERT OR IGNORE INTO message_locations (message_shadow_uid, folder, uid)
+            SELECT id, folder, uid FROM messages
+            WHERE folder IS NOT NULL AND uid IS NOT NULL AND uid > 0
+            "#,
+        )
+        .execute(pool)
+        .await
+        .context("Failed to backfill message locations")?;
+        sqlx::query("INSERT OR IGNORE INTO schema_migrations (version) VALUES (5)")
+            .execute(pool)
+            .await
+            .context("Failed to mark migration 005 as applied")?;
+        Ok(())
+    }
+
     async fn ensure_column(
         pool: &SqlitePool,
         table: &str,
@@ -284,31 +335,6 @@ impl StateManager {
         .with_context(|| format!("Failed to add {table}.{column}"))?;
 
         Ok(())
-    }
-
-    /// Check if the database has the old schema (folder/uid unique) that needs migration
-    async fn check_needs_schema_migration(pool: &SqlitePool) -> Result<bool> {
-        // Check if messages table exists
-        let table_exists: Option<(String,)> =
-            sqlx::query_as("SELECT name FROM sqlite_master WHERE type='table' AND name='messages'")
-                .fetch_optional(pool)
-                .await
-                .context("Failed to check for messages table")?;
-
-        if table_exists.is_none() {
-            return Ok(false); // Fresh install, no migration needed
-        }
-
-        // Check if schema_migrations table exists (new schema indicator)
-        let migrations_exists: Option<(String,)> = sqlx::query_as(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'",
-        )
-        .fetch_optional(pool)
-        .await
-        .context("Failed to check for schema_migrations table")?;
-
-        // If messages exists but schema_migrations doesn't, we have old schema
-        Ok(migrations_exists.is_none())
     }
 
     /// Mark a message as read by the agent using message_id
@@ -685,8 +711,6 @@ impl StateManager {
             INSERT INTO messages (account, message_id, folder, uid, subject, from_address, date_sent)
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             ON CONFLICT(account, message_id) DO UPDATE SET
-                folder = ?3,
-                uid = ?4,
                 subject = COALESCE(?5, subject),
                 from_address = COALESCE(?6, from_address),
                 date_sent = COALESCE(?7, date_sent)
@@ -711,6 +735,19 @@ impl StateManager {
                 .fetch_one(&self.pool)
                 .await
                 .context("Failed to get shadow UID after upsert")?;
+
+        sqlx::query(
+            r#"
+            INSERT OR IGNORE INTO message_locations (message_shadow_uid, folder, uid)
+            VALUES (?1, ?2, ?3)
+            "#,
+        )
+        .bind(result.0)
+        .bind(folder)
+        .bind(imap_uid as i64)
+        .execute(&self.pool)
+        .await
+        .context("Failed to record message location")?;
 
         Ok(result.0)
     }
@@ -752,51 +789,103 @@ impl StateManager {
 
         for &shadow_uid in shadow_uids {
             let record = self.get_message_by_shadow_uid(account, shadow_uid).await?;
-
-            match record {
-                Some(msg) => {
-                    resolved.push(ResolvedMessage {
-                        shadow_uid: msg.id,
-                        folder: msg.folder,
-                        imap_uid: msg.uid as u32,
-                        message_id: Some(msg.message_id),
-                    });
-                }
-                None => {
-                    return Err(anyhow::anyhow!(
-                        "Message {} not found. Run 'inbox' or 'query' first to discover messages.",
-                        shadow_uid
-                    ));
-                }
+            let Some(msg) = record else {
+                return Err(anyhow::anyhow!(
+                    "Message {} not found. Run 'inbox' or 'query' first to discover messages.",
+                    shadow_uid
+                ));
+            };
+            let locations: Vec<MessageLocation> = sqlx::query_as(
+                "SELECT folder, uid FROM message_locations WHERE message_shadow_uid = ?1 ORDER BY folder, uid",
+            )
+            .bind(shadow_uid)
+            .fetch_all(&self.pool)
+            .await
+            .context("Failed to resolve message locations")?;
+            if locations.len() != 1 {
+                return Err(anyhow::anyhow!(
+                    "Message {} has {} known folder locations. Use a selection from the target folder before mutating it.",
+                    shadow_uid,
+                    locations.len()
+                ));
             }
+            let location = &locations[0];
+            resolved.push(ResolvedMessage {
+                shadow_uid: msg.id,
+                folder: location.folder.clone(),
+                imap_uid: location.uid as u32,
+                message_id: Some(msg.message_id),
+            });
         }
 
         Ok(resolved)
     }
 
-    /// Update message location by message_id (used after move when we know the message_id but need to find new UID)
-    pub async fn update_message_location_by_message_id(
+    /// Resolve a saved selection at the exact folder and UID that produced it.
+    pub async fn resolve_selection_entries(
+        &self,
+        account: &str,
+        entries: &[SelectionEntry],
+    ) -> Result<Vec<ResolvedMessage>> {
+        let mut resolved = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let shadow_uid = entry.shadow_uid.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Selection contains a message without a stable ID. Re-run the query before mutating it."
+                )
+            })?;
+            let message_id = entry.message_id.clone().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Selection contains a message without a Message-ID. Re-run the query before mutating it."
+                )
+            })?;
+            let exists: Option<(i64,)> = sqlx::query_as(
+                "SELECT id FROM messages WHERE account = ?1 AND id = ?2 AND message_id = ?3",
+            )
+            .bind(account)
+            .bind(shadow_uid)
+            .bind(&message_id)
+            .fetch_optional(&self.pool)
+            .await
+            .context("Failed to validate selected message")?;
+            if exists.is_none() {
+                return Err(anyhow::anyhow!(
+                    "Selected message {} is stale. Re-run the query before mutating it.",
+                    shadow_uid
+                ));
+            }
+            resolved.push(ResolvedMessage {
+                shadow_uid,
+                folder: entry.folder.clone(),
+                imap_uid: entry.uid as u32,
+                message_id: Some(message_id),
+            });
+        }
+        Ok(resolved)
+    }
+
+    pub async fn remove_message_location(
         &self,
         account: &str,
         message_id: &str,
-        new_folder: &str,
-        new_imap_uid: u32,
+        folder: &str,
+        uid: u32,
     ) -> Result<()> {
         sqlx::query(
             r#"
-            UPDATE messages
-            SET folder = ?3, uid = ?4
-            WHERE account = ?1 AND message_id = ?2
+            DELETE FROM message_locations
+            WHERE message_shadow_uid = (
+                SELECT id FROM messages WHERE account = ?1 AND message_id = ?2
+            ) AND folder = ?3 AND uid = ?4
             "#,
         )
         .bind(account)
         .bind(message_id)
-        .bind(new_folder)
-        .bind(new_imap_uid)
+        .bind(folder)
+        .bind(uid as i64)
         .execute(&self.pool)
         .await
-        .context("Failed to update message location by message_id")?;
-
+        .context("Failed to remove stale message location")?;
         Ok(())
     }
 }

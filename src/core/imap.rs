@@ -527,22 +527,18 @@ impl ImapClient {
         Ok(())
     }
 
-    /// Move messages to a destination folder (COPY + DELETE + EXPUNGE)
-    pub async fn move_messages(&mut self, uids: &[u32], dest_folder: &str) -> Result<()> {
-        if uids.is_empty() {
-            return Ok(());
-        }
-
-        // Copy to destination
-        self.copy_messages(uids, dest_folder).await?;
-
-        // Mark as deleted in source
-        self.mark_messages_deleted(uids).await?;
-
-        // Expunge deleted messages
-        self.expunge().await?;
-
-        Ok(())
+    /// Check whether a folder contains a message with this RFC 822 Message-ID.
+    /// The ID is a stable verification key for copy-before-delete operations.
+    pub async fn folder_has_message_id(&mut self, folder: &str, message_id: &str) -> Result<bool> {
+        self.select_folder(folder).await?;
+        let escaped = message_id.replace('\\', "\\\\").replace('"', "\\\"");
+        let search = format!("HEADER Message-ID \"{escaped}\"");
+        let matches = self
+            .session
+            .uid_search(&search)
+            .await
+            .with_context(|| format!("Failed to verify Message-ID in folder: {folder}"))?;
+        Ok(!matches.is_empty())
     }
 
     /// Mark messages with \Deleted flag
