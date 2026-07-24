@@ -26,6 +26,22 @@ cargo build --release
 cp target/release/protoncli /usr/local/bin/
 ```
 
+### Signed local install (macOS)
+
+For stable Keychain approval on your own Mac, build and sign one local binary:
+
+```bash
+scripts/install-signed-local.sh
+```
+
+It uses the first installed Apple Development identity and installs to
+`~/.local/bin/protoncli` by default. Add that directory to your shell `PATH`,
+then run `protoncli account test <your-account-email>` once and choose **Always
+Allow** when macOS asks for Keychain access. Use `--dry-run` to inspect the
+selected identity and target path, or `--install-dir /usr/local/bin` for a
+machine-wide install. This is a personal-development workflow; it does not
+notarize the binary or publish a release.
+
 ## Setup
 
 Add your account:
@@ -59,6 +75,7 @@ protoncli read 12345                     # markdown output
 protoncli read 12345 --output json       # json output
 protoncli read 12345 --raw               # raw RFC822
 protoncli read 12345 --mark-read         # mark as read in IMAP
+protoncli read 12345 --mark-agent-read   # mark as read only in local agent state
 ```
 
 ### Send email
